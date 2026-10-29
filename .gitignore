@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Production builds
+dist/
+
+# Logs & caches
+coverage/
+*.tsbuildinfo
+*.log
+
+# Environment & OS
+.DS_Store
+.env*

@@ -1,0 +1,74 @@
+{
+  "name": "@klnap/next-proxy-chain",
+  "version": "1.0.4",
+  "description": "Composable request pipeline for Next.js middleware and proxy.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/klnap/next-proxy-chain.git"
+  },
+  "bugs": {
+    "url": "https://github.com/klnap/next-proxy-chain/issues"
+  },
+  "homepage": "https://github.com/klnap/next-proxy-chain#readme",
+  "license": "MIT",
+  "author": "klnap",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "nextjs",
+    "nextjs15",
+    "nextjs16",
+    "next-proxy",
+    "proxy",
+    "next-middleware",
+    "middleware",
+    "middleware-chain",
+    "request-pipeline",
+    "chain",
+    "edge"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "lint": "biome check .",
+    "clean": "rm -rf dist coverage",
+    "prepublishOnly": "bun run clean && bun run typecheck && bun test && bun run build"
+  },
+  "peerDependencies": {
+    "next": ">=15.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "^20",
+    "next": "16.3.2",
+    "tsup": "^8.4.0",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "bun": ">=1.0.0"
+  }
+}

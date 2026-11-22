@@ -99,4 +99,4 @@ The context is created for each request and dropped when the request finishes. I
 
 ## Reporting a vulnerability
 
-Please do not open a public issue for a security problem. Private vulnerability reporting is not yet enabled for this repository. Until it is, contact the maintainer by email through the GitHub profile of the repository owner.
+Please do not open a public issue for a security problem. Report it privately through GitHub's private vulnerability reporting: open the repository's **Security** tab and choose **Report a vulnerability**.

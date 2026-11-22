@@ -25,7 +25,7 @@ proxyChain(options, entries)
 proxyChain<TContext>({ createContext, ...options }, entries)
 ```
 
-- `entries`: an array of rules. Each entry is either a rule created with `defineProxy`, a plain function, or a `{ run, include, exclude, name }` object.
+- `entries`: an array of rules. Each entry is either a rule created with `defineProxy`, a plain function, or a `{ run, include, exclude, name }` object. In the object form, `include` and `exclude` take scopes built with `path()` or `host()`. Other values throw at startup, so a bare RegExp cannot silently match every request.
 - `options`: see [Options](#options).
 
 Export the result as the default export of `proxy.ts` (Next.js 16) or `middleware.ts` (Next.js 15).
@@ -74,6 +74,8 @@ type NextOptions = {
 
 `request` values pass through `requestHeaderPolicy`. Header names in `headers` are merged according to `headerMergeStrategy`, and cookies according to `cookieMergeStrategy`.
 
+`headers` are sent to the browser on the response Next.js returns. Next.js advises against setting response headers from the proxy this way, because a header such as `Content-Type` can break Server Actions and streaming responses. Keep proxy response headers to safe values like `cache-control` and security headers, and set anything else in the route.
+
 ## `isNextResult`
 
 ```ts
@@ -100,7 +102,9 @@ String patterns:
 
 `:name` matches one segment. It does not capture a value. Use `req.nextUrl.pathname` if you need the segment.
 
-RegExp patterns keep your anchors. Without anchors, the whole path must match:
+`*` and `**` must be a whole segment. A segment such as `*.pdf` throws when the rule is created, instead of matching a literal.
+
+A RegExp is matched as written. If it has neither `^` nor `$`, the whole path must match. A one-sided anchor gives a prefix or suffix match, so anchor both ends for an exact match:
 
 - `path(/^\/foo$/)` matches `/foo` only.
 - `path(/\/public|\/static/)` matches `/public` and `/static` as whole paths, not `/admin/static`.
@@ -117,7 +121,7 @@ Compiles host names for a host scope.
 
 - `host('admin.example.com')`: exact match, case-insensitive. The port is ignored.
 - `host('*.example.com')`: one DNS label. `foo.example.com` matches. `example.com` and `a.b.example.com` do not.
-- `host(/shop\.localhost$/)`: a RegExp, used as written.
+- `host(/shop\.localhost$/)`: a RegExp, matched against the whole host name. Only its source is used; its flags are ignored, and matching is case-insensitive.
 - An array matches if any entry matches.
 
 The host comes from the `host` header, or from `x-forwarded-host` when `host` is absent. The client controls this header. See [Security](security.md#host-matching).
@@ -148,7 +152,7 @@ Passed to `onError` when a rule exceeds `ruleTimeoutMs`. Check with `err instanc
 | `createContext` | `(req, event) => TContext` | `createProxyContext` | Creates the context for each request. Required when `TContext` is not a `Map`. |
 | `headerMergeStrategy` | `'last-write-wins' \| 'first-write-wins' \| MergeFn` | `'last-write-wins'` | Resolves response header conflicts between rules. |
 | `cookieMergeStrategy` | `'last-write-wins' \| 'first-write-wins' \| MergeFn` | `'last-write-wins'` | Resolves `Set-Cookie` conflicts with the same name, domain, and path. |
-| `ruleTimeoutMs` | `number` | `0` | Time limit per rule in milliseconds. `0` disables it. Must be finite. |
+| `ruleTimeoutMs` | `number` | `0` | Time limit per rule in milliseconds. `0` disables it. Must be a finite number, 0 or greater. |
 | `onError` | `OnErrorHandler` | none | Recovers from a thrown rule or a timeout. See below. |
 | `requestHeaderPolicy` | `{ blocked?: string[]; allowed?: string[] }` | `{}` | Controls which request headers `next({ request })` may set. |
 | `debug` | `boolean` | `false` | Logs one line per rule, and merge conflicts. |
@@ -162,7 +166,7 @@ Passed to `onError` when a rule exceeds `ruleTimeoutMs`. Check with `err instanc
 
 By default, these names cannot be set through `next({ request })`:
 
-`host`, `connection`, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `te`, `trailer`, `transfer-encoding`, `upgrade`, `content-length`, `cookie`, `authorization`, `x-forwarded-host`, `x-forwarded-for`, `x-forwarded-proto`, `x-real-ip`, and every name starting with `x-middleware-`.
+`host`, `connection`, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `te`, `trailer`, `transfer-encoding`, `upgrade`, `content-length`, `cookie`, `authorization`, `x-forwarded-host`, `x-forwarded-for`, `x-forwarded-proto`, `x-real-ip`, and every name starting with `x-middleware-`. Other `x-forwarded-*` names, such as `x-forwarded-port`, are not on the list.
 
 - `blocked` adds names to this list.
 - `allowed` lets names through. It overrides the default list, including `x-middleware-*` names. Use it only for headers your own code controls.
@@ -180,7 +184,7 @@ type OnErrorHandler<TContext> = (
 ) => OnErrorResult | Promise<OnErrorResult>
 ```
 
-`ruleIndex` is the zero-based index of the rule that failed. `-1` means the failure came after all rules ran.
+`ruleIndex` is the zero-based index of the rule that failed. `-1` means the error came from the engine itself rather than a rule's own code: after all rules ran, or while reading a rule's return value.
 
 | Returns | Effect |
 | :--- | :--- |

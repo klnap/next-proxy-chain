@@ -1,5 +1,5 @@
-import { defineProxy, host, next, path, proxyChain } from '@klnap/next-proxy-chain'
-import { NextResponse } from 'next/server'
+import { defineProxy, next, path, proxyChain } from '@klnap/next-proxy-chain'
+import { type NextRequest, NextResponse } from 'next/server'
 
 const apiKeyCheck = defineProxy('api-key', (req) => {
   if (!req.headers.get('x-api-key')) {
@@ -8,8 +8,14 @@ const apiKeyCheck = defineProxy('api-key', (req) => {
   return next()
 })
 
+// Placeholder. Replace with a server-side session check (see docs/security.md).
+// A cookie that is merely present proves nothing.
+function isAdminSession(_req: NextRequest): boolean {
+  return false
+}
+
 const adminOnly = defineProxy('admin-only', (req) => {
-  if (!req.cookies.has('admin')) {
+  if (!isAdminSession(req)) {
     return NextResponse.redirect(new URL('/login', req.url))
   }
   return next()
@@ -19,6 +25,6 @@ export default proxyChain([
   // `/api/**` covers /api, /api/users and /api/users/123.
   // `/api/*` would cover exactly one segment, so /api/users/123 would skip the check.
   apiKeyCheck({ include: path('/api/**'), exclude: path('/api/public/**') }),
-  // Only for the admin host, and only under /settings.
-  adminOnly({ include: { host: host('admin.example.com'), path: path('/settings/**') } }),
+  // Scope by path, not by host. The host header is client-controlled.
+  adminOnly({ include: path('/settings/**') }),
 ])

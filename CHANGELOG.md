@@ -12,7 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An engine-level `onError` (after all rules ran) returning `NextResponse.next()` now returns `500` instead of passing the request through without later rules.
 - Next.js routing headers (`x-middleware-override-headers`, `x-middleware-request-*`) are removed from responses returned by `onError`, as they already were for rule responses.
 
+### Security
+
+- Bare object scopes (`{ run, include }` with a RegExp instead of `path()`/`host()`) throw at startup. Before, they matched every request.
+- Plain `Response` objects cannot continue the chain or request a rewrite through `x-middleware-next` or `x-middleware-rewrite`. Only `NextResponse` can. Relayed upstream responses keep their body.
+- Path segments that mix a wildcard with other characters (for example `/files/*.pdf`) throw at startup. Before, they matched a literal and silently never ran the rule.
+- `ruleTimeoutMs` rejects negative values. Before, they silently disabled the timeout.
+
 ### Documentation
+
+- Example 02 no longer gates admin routes on cookie presence or host. Example 05 has a matcher.
+- API notes: `headers` on proxy responses, one-sided RegExp anchors, `-1` error index, `*` and `**` as whole segments, Server Functions and matchers.
 
 - README rewritten around adoption: what the package does, when to use it, a quick start that puts the security header first.
 - New `docs/` section: concepts (execution model), guides, API reference, security notes.

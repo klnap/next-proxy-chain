@@ -105,6 +105,8 @@ next({ headers: { 'cache-control': 'no-store' } })
 
 Request headers and response headers are separate channels. Setting one does not set the other.
 
+Keep proxy response headers to safe values such as `cache-control` and security headers. Next.js advises against setting `Content-Type` from the proxy, because it can break Server Actions and streaming. See [the API notes](api.md#next).
+
 ## Redirect old URLs
 
 Return `NextResponse.redirect`. The chain stops, so rules after it do not run.
@@ -128,6 +130,11 @@ const localeRewrite = defineProxy('locale-rewrite', (req) => {
   if (pathname.startsWith('/pl/')) return undefined
   return NextResponse.rewrite(new URL(`/pl${pathname}`, req.url))
 })
+
+// Without a matcher the rewrite would also run for static files and API routes.
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|api|favicon.ico).*)'],
+}
 
 // Runs for /pl/... only, including requests that were just rewritten to it.
 const plOnly = defineProxy('pl-only', () => next({ headers: { 'content-language': 'pl' } }))

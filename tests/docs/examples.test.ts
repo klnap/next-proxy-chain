@@ -48,7 +48,7 @@ describe('documentation examples', () => {
     expect(publicPath.headers.get('x-middleware-next')).toBe('1')
   })
 
-  it('02 scoped rules: admin rule only on the admin host', async () => {
+  it('02 scoped rules: the admin rule redirects without a verified session, on any host', async () => {
     const onAdmin = await scoped(
       req('http://admin.example.com/settings/profile', { headers: { host: 'admin.example.com' } }),
       event
@@ -56,7 +56,7 @@ describe('documentation examples', () => {
     expect(onAdmin.status).toBe(307)
 
     const onOther = await scoped(req('http://www.example.com/settings/profile'), event)
-    expect(onOther.headers.get('x-middleware-next')).toBe('1')
+    expect(onOther.status).toBe(307)
   })
 
   it('03 typed context: generated request id is passed downstream', async () => {

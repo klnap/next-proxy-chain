@@ -20,3 +20,8 @@ const legacyRedirect = defineProxy('legacy-redirect', (req) => {
 })
 
 export default proxyChain([legacyRedirect, localeRewrite, plOnly({ include: path('/pl/**') })])
+
+// Without a matcher, a locale rewrite would also apply to static files and API routes.
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|api|favicon.ico).*)'],
+}

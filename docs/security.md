@@ -22,6 +22,10 @@ const requireSession = defineProxy('require-session', async (req) => {
 
 `verifySession` is your code. Keep in mind that Proxy runs before the route, so a route handler should still check authorization for the data it returns.
 
+## Server Functions
+
+Server Functions (Server Actions) are sent as POST requests to the route that uses them. A proxy matcher that excludes that route also skips the Server Function calls. Check authentication and authorization inside each Server Function, not only in the proxy.
+
 ## Ordering and early responses
 
 A rule that returns a `Response` stops the chain. Rules after it do not run, which means their headers, cookies, and checks are absent from that response.
@@ -54,7 +58,7 @@ The `host` header is set by the client, or by a proxy in front of your app, and 
 
 `next({ request })` sets headers that route handlers and later rules receive. A client cannot set these headers, but a rule can. Overrides go through `requestHeaderPolicy`. By default, these names are blocked:
 
-- `cookie`, `authorization`, `host`, `x-forwarded-*`, `x-real-ip`, and hop-by-hop headers,
+- `cookie`, `authorization`, `host`, `x-forwarded-host`, `x-forwarded-for`, `x-forwarded-proto`, `x-real-ip`, and hop-by-hop headers,
 - every `x-middleware-*` name.
 
 Do not put identity or authorization data into `request` headers unless the rule that sets it is the only source for them, and the route handler trusts only that header. A client that can reach the handler directly can send the same header.

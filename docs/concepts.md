@@ -45,7 +45,7 @@ Rule-level scope is checked before the rule runs. A skipped rule has no effect a
 These are two separate channels:
 
 - **Request headers** change what downstream code sees: other rules, route handlers, and server components. Set them with `next({ request })`.
-- **Response headers** change what the browser sees. Set them with `next({ headers })`, or by returning a `Response` that has them.
+- **Response headers** change what the browser sees. Set them with `next({ headers })`, or by returning a `Response` that has them. Keep them to safe values such as `cache-control` and security headers. Next.js advises against proxy-set `Content-Type`, which can break Server Actions; see [the API notes](api.md#next).
 
 The distinction matters because a header you set for downstream code is not sent to the browser, and a header you send to the browser is not visible to route handlers.
 
@@ -115,7 +115,7 @@ A rule can throw. What happens next depends on `onError`:
 | `onError` returns nothing | `500 Internal Server Error`. |
 | `onError` throws | `500 Internal Server Error`. |
 
-`onError` receives the error and the index of the rule that threw. Index `-1` means the failure happened after all rules ran, while the final response was being built. No rule is left to continue to, so only a `Response` is honored there. `next()` or `NextResponse.next()` returns `500`.
+`onError` receives the error and the index of the rule that threw. Index `-1` means the error came from the engine itself, after all rules ran or while reading a rule's return value. No rule is left to continue to, so only a `Response` is honored there. `next()` or `NextResponse.next()` returns `500`.
 
 `ruleTimeoutMs` gives each rule a time limit. A rule that runs past it is treated as thrown, with a `RuleTimeoutError`. The rule function is not cancelled: it keeps running in the background, and its late result is ignored.
 

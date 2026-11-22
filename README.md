@@ -54,7 +54,7 @@ It is a composition layer, not a security product. It does not authenticate user
 
 ## How it works
 
-- Rules run in array order. Each rule returns `next()` to continue, or a `Response` to stop.
+- Rules run in array order. A rule continues by returning `next()` or nothing, and stops the chain by returning a `Response`.
 - A rule can be scoped with `include` and `exclude` paths or hosts. Rules that do not match are skipped.
 - Headers and cookies set by earlier rules are kept on the final response, unless a later rule overrides them.
 - Each request gets its own context. Rules can share values through it without globals.

@@ -1,6 +1,6 @@
 {
   "name": "@klnap/next-proxy-chain",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Compose independent request rules for Next.js proxy.ts and middleware.ts.",
   "repository": {
     "type": "git",

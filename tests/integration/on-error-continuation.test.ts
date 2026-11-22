@@ -76,12 +76,14 @@ describe('onError recovery semantics', () => {
   })
 
   it('fails closed when an engine-level onError returns NextResponse.next()', async () => {
-    const malformed = defineProxy('malformed', () => true as never)
-    const auth = defineProxy('auth', () => new Response('denied', { status: 403 }))
-    const handler = proxyChain({ logger: silent, onError: () => NextResponse.next() }, [
-      malformed,
-      auth,
-    ])
+    // Continues with an invalid rewrite target, so the failure happens after all rules ran.
+    const badRewrite = defineProxy('bad-rewrite', () => {
+      const res = NextResponse.rewrite(new URL('http://localhost/ok'))
+      res.headers.set('x-middleware-rewrite', 'http://[::bad')
+      return res
+    })
+    // No later rule may stop the chain, so the final rewrite is the failing step.
+    const handler = proxyChain({ logger: silent, onError: () => NextResponse.next() }, [badRewrite])
 
     const res = await handler(new NextRequest('http://localhost/admin'), fakeEvent)
     expect(res.status).toBe(500)
@@ -128,5 +130,25 @@ describe('onError recovery semantics', () => {
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('upstream body')
     expect(res.headers.get('x-middleware-rewrite')).toBeNull()
+  })
+
+  it('reports a malformed rule return with that rule index, not -1', async () => {
+    const malformed = defineProxy('malformed', () => 'continue' as never)
+    const auth = defineProxy('auth', () => new Response('denied', { status: 403 }))
+    const seen: number[] = []
+    const handler = proxyChain(
+      {
+        logger: silent,
+        onError: (_err, index) => {
+          seen.push(index)
+          return new Response('recovered', { status: 503 })
+        },
+      },
+      [malformed, auth]
+    )
+
+    const res = await handler(new NextRequest('http://localhost/admin'), fakeEvent)
+    expect(seen).toEqual([0])
+    expect(res.status).toBe(503)
   })
 })

@@ -18,6 +18,7 @@ import {
 import {
   assertOverrideMechanismSupported,
   finalizeResponse,
+  type ResolvedOutcome,
   resolveRuleResult,
   safeInternalError,
 } from './pipeline'
@@ -34,6 +35,8 @@ import type {
   ProxyPathFilter,
   ProxyRule,
 } from './types'
+
+type RuleRaw = NextResponse | Response | NextResult | undefined | void
 
 /** NextResponse.next() sets x-middleware-next; it continues the pipeline. */
 function isNextResponse(value: unknown): boolean {
@@ -233,6 +236,69 @@ export function proxyChain<TContext>(
       })
     }
 
+    // Handles an error thrown by rule `i` (or while reading its return value).
+    // Returns the raw result to continue with, or the final response.
+    const recoverRuleError = async (
+      err: unknown,
+      i: number,
+      label: string,
+      req: NextRequest,
+      startedAt: number
+    ): Promise<{ raw: RuleRaw } | { response: NextResponse | Response }> => {
+      if (!config.onError) {
+        logger.error({ rule: label, err }, 'rule threw')
+        return { response: safeInternalError() }
+      }
+      try {
+        const recovered = await config.onError(err, i, req, ctx)
+        if (recovered == null) return { response: safeInternalError() }
+        // NextResponse.next() is a Response; treat it as continuation, not a stop.
+        if (isNextResult(recovered) || isNextResponse(recovered)) return { raw: recovered }
+        if (!(recovered instanceof Response)) return { response: safeInternalError() }
+
+        stripRoutingOverrides(recovered)
+        headerWrites.push({
+          ruleIndex: i,
+          ruleName: label,
+          items: responseHeaderItems(recovered.headers),
+        })
+        cookieWrites.push({
+          ruleIndex: i,
+          ruleName: label,
+          items: cookieItemsFromHeaders(recovered.headers),
+        })
+        if (debug) {
+          logger.debug(
+            formatPipelineLine({
+              method,
+              path: pathname,
+              name: label,
+              traceId,
+              outcome: {
+                kind: 'stop',
+                duration: performance.now() - startedAt,
+                status: recovered.status,
+              },
+            })
+          )
+        }
+        return {
+          response: finalizeResponse(
+            recovered,
+            headerWrites,
+            cookieWrites,
+            headerMergeStrategy,
+            cookieMergeStrategy,
+            logger,
+            debug
+          ),
+        }
+      } catch (onErrorErr) {
+        logger.error({ rule: label, err: onErrorErr }, 'onError handler threw')
+        return { response: safeInternalError() }
+      }
+    }
+
     try {
       for (let i = 0; i < rules.length; i++) {
         const rule = rules[i]!
@@ -253,8 +319,7 @@ export function proxyChain<TContext>(
         if (!ruleMatches(matchPath, reqHost, rule)) continue
 
         const startedAt = debug ? performance.now() : 0
-        let raw: NextResponse | Response | NextResult | undefined | void
-
+        let raw: RuleRaw
         try {
           raw = await withRuleTimeout(
             Promise.resolve(rule.run(activeReq, ctx, event)),
@@ -262,63 +327,20 @@ export function proxyChain<TContext>(
             label
           )
         } catch (err) {
-          if (config.onError) {
-            try {
-              const recovered = await config.onError(err, i, activeReq, ctx)
-              if (recovered == null) return safeInternalError()
-              // NextResponse.next() is a Response; treat it as continuation, not a stop.
-              if (isNextResult(recovered) || isNextResponse(recovered)) {
-                raw = recovered
-              } else if (recovered instanceof Response) {
-                stripRoutingOverrides(recovered)
-                headerWrites.push({
-                  ruleIndex: i,
-                  ruleName: label,
-                  items: responseHeaderItems(recovered.headers),
-                })
-                cookieWrites.push({
-                  ruleIndex: i,
-                  ruleName: label,
-                  items: cookieItemsFromHeaders(recovered.headers),
-                })
-                if (debug) {
-                  logger.debug(
-                    formatPipelineLine({
-                      method,
-                      path: pathname,
-                      name: label,
-                      traceId,
-                      outcome: {
-                        kind: 'stop',
-                        duration: performance.now() - startedAt,
-                        status: recovered.status,
-                      },
-                    })
-                  )
-                }
-                return finalizeResponse(
-                  recovered,
-                  headerWrites,
-                  cookieWrites,
-                  headerMergeStrategy,
-                  cookieMergeStrategy,
-                  logger,
-                  debug
-                )
-              } else {
-                return safeInternalError()
-              }
-            } catch (onErrorErr) {
-              logger.error({ rule: label, err: onErrorErr }, 'onError handler threw')
-              return safeInternalError()
-            }
-          } else {
-            logger.error({ rule: label, err }, 'rule threw')
-            return safeInternalError()
-          }
+          const recovered = await recoverRuleError(err, i, label, activeReq, startedAt)
+          if ('response' in recovered) return recovered.response
+          raw = recovered.raw
         }
 
-        const outcome = resolveRuleResult(raw, requestHeaderPolicy, logger, debug)
+        // A malformed return value is attributed to this rule, like a thrown error.
+        let outcome: ResolvedOutcome
+        try {
+          outcome = resolveRuleResult(raw, requestHeaderPolicy, logger, debug)
+        } catch (err) {
+          const recovered = await recoverRuleError(err, i, label, activeReq, startedAt)
+          if ('response' in recovered) return recovered.response
+          outcome = resolveRuleResult(recovered.raw, requestHeaderPolicy, logger, debug)
+        }
         const duration = debug ? performance.now() - startedAt : 0
 
         if (outcome.kind === 'continue') {

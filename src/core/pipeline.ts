@@ -111,6 +111,13 @@ export function resolveRuleResult(
     return { kind: 'continue', responseHeaders: new Map(), cookies: new Map() }
   }
 
+  // Reject values the chain cannot act on, so the error is attributed to the rule that returned them.
+  if (!isNextResult(res) && !(res instanceof Response)) {
+    throw new TypeError(
+      `[proxy-chain] rule must return next(), a Response, or undefined. Got ${typeof res}.`
+    )
+  }
+
   if (isNextResult(res)) {
     let request: Headers | undefined
     if (res.request) {

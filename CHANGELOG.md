@@ -4,6 +4,16 @@ All notable changes to `@klnap/next-proxy-chain` will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Responses with immutable headers (`Response.redirect()`, `fetch()` responses) are copied before headers are merged. Before, a rule returning them produced a `500` on Node.js.
+- A fail-closed `500` keeps the headers and cookies that earlier rules set, such as a CSP header.
+- Request overrides go to Next.js only when a rule changed a request header. Before, every request header was encoded as `x-middleware-request-*` on every request.
+- `hostFolderHeader` matches whole path segments: `/tenant-other` is not treated as inside `/tenant`.
+- `strictOverrideCheck` verifies that Next.js applies request overrides, not only the continuation flag.
+
 ## [1.0.6] - 2026-11-22
 
 ### Fixed

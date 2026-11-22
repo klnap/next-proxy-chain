@@ -46,4 +46,17 @@ describe('scope matching hardening', () => {
     const res = await handler(new NextRequest('http://localhost/%E0%A4%A'), {} as never)
     expect(res.status).toBe(400)
   })
+
+  it('applies a ** scope to decoded control characters in the path', async () => {
+    const auth = defineProxy('auth', () => new Response('denied', { status: 403 }))
+    const handler = proxyChain({ logger: silent }, [auth({ include: path('/admin/**') })])
+    for (const url of [
+      'http://localhost/admin/%0Asecret',
+      'http://localhost/admin/%0Dsecret',
+      'http://localhost/admin/%E2%80%A8secret',
+    ]) {
+      const res = await handler(new NextRequest(url), {} as never)
+      expect(res.status).toBe(403)
+    }
+  })
 })

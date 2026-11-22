@@ -65,13 +65,50 @@ describe('onError recovery semantics', () => {
           headers: { 'x-middleware-rewrite': 'http://[::bad' },
         })
     )
-    const handler = proxyChain({ logger: silent, onError: () => NextResponse.next() }, [
-      setHeaders,
-      badRewrite,
-    ])
+    const handler = proxyChain(
+      { logger: silent, onError: () => new Response('recovered', { status: 503 }) },
+      [setHeaders, badRewrite]
+    )
 
     const res = await handler(new NextRequest('http://localhost/x'), fakeEvent)
     expect(res.headers.get('x-csp')).toBe("default-src 'self'")
     expect(res.headers.get('set-cookie')).toContain('sid=1')
+  })
+
+  it('fails closed when an engine-level onError returns NextResponse.next()', async () => {
+    const malformed = defineProxy('malformed', () => true as never)
+    const auth = defineProxy('auth', () => new Response('denied', { status: 403 }))
+    const handler = proxyChain({ logger: silent, onError: () => NextResponse.next() }, [
+      malformed,
+      auth,
+    ])
+
+    const res = await handler(new NextRequest('http://localhost/admin'), fakeEvent)
+    expect(res.status).toBe(500)
+  })
+
+  it('strips routing override headers from an onError-recovered Response', async () => {
+    const boom = defineProxy('boom', () => {
+      throw new Error('upstream down')
+    })
+    const handler = proxyChain(
+      {
+        logger: silent,
+        onError: () =>
+          new Response('Service unavailable', {
+            status: 503,
+            headers: {
+              'x-middleware-override-headers': 'cookie',
+              'x-middleware-request-cookie': 'session=evil',
+            },
+          }),
+      },
+      [boom]
+    )
+
+    const res = await handler(new NextRequest('http://localhost/x'), fakeEvent)
+    expect(res.status).toBe(503)
+    expect(res.headers.get('x-middleware-request-cookie')).toBeNull()
+    expect(res.headers.get('x-middleware-override-headers')).toBeNull()
   })
 })

@@ -55,7 +55,7 @@ function isScopeObject(
 }
 
 function segmentToRegex(segment: string): string {
-  if (segment === '**') return '(?:.*)'
+  if (segment === '**') return '(?:[\\s\\S]*)'
   if (segment === '*') return '[^/]+'
   if (segment.startsWith(':')) return '[^/]+'
   return escapeRegex(segment)
@@ -98,7 +98,7 @@ function compileStringPath(pattern: string): RegExp {
     pathPattern = prefix ? `/${prefix}/[^/]+` : `/[^/]+`
   } else if (trailingGlobstar) {
     const prefix = segments.slice(0, -1).map(segmentToRegex).join('/')
-    pathPattern = prefix ? `/${prefix}(?:/.*)?` : `/(?:.*)?`
+    pathPattern = prefix ? `/${prefix}(?:/[\\s\\S]*)?` : `/(?:[\\s\\S]*)?`
   } else {
     pathPattern = `/${segments.map(segmentToRegex).join('/')}`
   }

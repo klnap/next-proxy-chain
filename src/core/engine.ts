@@ -40,6 +40,16 @@ function isNextResponse(value: unknown): boolean {
   return value instanceof Response && value.headers.get('x-middleware-next') === '1'
 }
 
+/** Terminal responses must not carry Next.js request-override headers into routing. */
+function stripRoutingOverrides(res: Response): void {
+  for (const key of [...res.headers.keys()]) {
+    const lower = key.toLowerCase()
+    if (lower === 'x-middleware-override-headers' || lower.startsWith('x-middleware-request-')) {
+      res.headers.delete(key)
+    }
+  }
+}
+
 function isPathFilter(value: unknown): value is ProxyPathFilter {
   if (value === null || typeof value !== 'object') return false
   if ('nextUrl' in value) return false
@@ -254,6 +264,7 @@ export function proxyChain<TContext>(
               if (isNextResult(recovered) || isNextResponse(recovered)) {
                 raw = recovered
               } else if (recovered instanceof Response) {
+                stripRoutingOverrides(recovered)
                 headerWrites.push({
                   ruleIndex: i,
                   ruleName: label,
@@ -348,16 +359,7 @@ export function proxyChain<TContext>(
           continue
         }
 
-        // Stop responses must not carry Next.js request-override headers into routing.
-        for (const key of [...outcome.response.headers.keys()]) {
-          const lower = key.toLowerCase()
-          if (
-            lower === 'x-middleware-override-headers' ||
-            lower.startsWith('x-middleware-request-')
-          ) {
-            outcome.response.headers.delete(key)
-          }
-        }
+        stripRoutingOverrides(outcome.response)
         headerWrites.push({
           ruleIndex: i,
           ruleName: label,
@@ -452,7 +454,9 @@ export function proxyChain<TContext>(
       if (config.onError) {
         try {
           const recovered = await config.onError(err, -1, materializeRequest(), ctx)
-          if (recovered instanceof Response) {
+          // No later rule can run here, so a continuation response would skip them. Fail closed.
+          if (recovered instanceof Response && !isNextResponse(recovered)) {
+            stripRoutingOverrides(recovered)
             return finalizeResponse(
               recovered,
               headerWrites,

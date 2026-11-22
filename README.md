@@ -73,36 +73,44 @@ Path patterns:
 
 Segments are compared whole. `/tenant` does not match `/tenant-other`. A pattern such as `/files/*.pdf` throws when the chain is created, because wildcards must be whole segments.
 
-## Context and typed rules
+## Context: data that lives for one request
 
-A handler that needs per-request state is written with `defineProxy()`. It receives a context object as its second argument:
+Context is an object that exists for one request, from the first handler to the last. You create it once, at the start, and every handler can read it or add to it. Nothing in it is shared with other requests.
+
+Use it for values that several handlers need, such as a request ID, a user, or a locale:
 
 ```ts
 import { chain, defineProxy, next } from '@klnap/next-proxy-chain'
+import type { NextRequest } from 'next/server'
 
-type Session = { user?: string }
+// 1. Say what the context looks like.
+type Ctx = { requestId: string; user?: string }
 
-const readSession = defineProxy<Session>('read-session', (request, session) => {
-  session.user = request.cookies.get('user')?.value
+// 2. Create it at the start of every request.
+const createContext = (req: NextRequest): Ctx => ({
+  requestId: req.headers.get('x-request-id') ?? crypto.randomUUID(),
+})
+
+// 3. A rule that reads the context.
+const readSession = defineProxy<Ctx>('read-session', (req, ctx) => {
+  ctx.user = req.cookies.get('user')?.value
   return next()
 })
 
-const requireUser = defineProxy<Session>('require-user', (request, session) => {
-  if (!session.user) return NextResponse.redirect(new URL('/login', request.url))
-  return next()
-})
-
-export default chain(
-  [readSession, [requireUser, '/dashboard/**']],
-  { createContext: (): Session => ({}) }
-)
+export default chain([readSession], { createContext })
 ```
 
-- The context is created for each request and is not shared between requests.
-- `createContext` is required when a rule declares a context type. Passing a rule that expects a different type is a compile-time error.
-- Rules run in array order. Put the rule that sets a value before the rule that reads it.
+There are two ways a handler can use the context:
 
-Use `defineProxy()` only when you need the context or a named rule. A plain function is enough for everything else.
+- **A `defineProxy()` rule** gets the context as its second argument: `(request, context, event)`. Use this when the rule needs the context.
+- **A plain function** gets it as an optional third argument: `(request, event, context)`. Use this when a native handler needs it. Next.js itself never passes the third argument, so the plain function still works as a native handler.
+
+Two rules to keep in mind:
+
+- The context type you declare in `defineProxy<Ctx>` has to match the type returned by `createContext`. If it does not, TypeScript reports an error.
+- Rules run in array order. A rule that sets a value must come before the rule that reads it.
+
+If a handler needs no context, do not use `defineProxy()`. A plain function is enough.
 
 ## Continuing and stopping
 

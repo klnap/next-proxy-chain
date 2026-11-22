@@ -73,44 +73,53 @@ Path patterns:
 
 Segments are compared whole. `/tenant` does not match `/tenant-other`. A pattern such as `/files/*.pdf` throws when the chain is created, because wildcards must be whole segments.
 
-## Context: data that lives for one request
+## Context: data shared along the chain
 
-Context is an object that exists for one request, from the first handler to the last. You create it once, at the start, and every handler can read it or add to it. Nothing in it is shared with other requests.
-
-Use it for values that several handlers need, such as a request ID, a user, or a locale:
+The context is a `Map` that exists for one request. A rule stores a value with `ctx.set`, and a later rule reads it with `ctx.get`:
 
 ```ts
 import { chain, defineProxy, next } from '@klnap/next-proxy-chain'
-import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
 
-// 1. Say what the context looks like.
-type Ctx = { requestId: string; user?: string }
+type Session = { user: string }
 
-// 2. Create it at the start of every request.
-const createContext = (req: NextRequest): Ctx => ({
-  requestId: req.headers.get('x-request-id') ?? crypto.randomUUID(),
-})
-
-// 3. A rule that reads the context.
-const readSession = defineProxy<Ctx>('read-session', (req, ctx) => {
-  ctx.user = req.cookies.get('user')?.value
+// Sets the value.
+const readSession = defineProxy('read-session', (req, ctx) => {
+  const user = req.cookies.get('user')?.value
+  if (user) ctx.set('session', { user })
   return next()
 })
 
-export default chain([readSession], { createContext })
+// Reads the value.
+const requireUser = defineProxy('require-user', (req, ctx) => {
+  const session = ctx.get('session') as Session | undefined
+  if (!session) return NextResponse.redirect(new URL('/login', req.url))
+  return next()
+})
+
+export default chain([readSession, [requireUser, '/dashboard/**']])
 ```
 
-There are two ways a handler can use the context:
+- Each request has its own map. Values never leak between requests.
+- `ctx.get` returns `unknown`, so cast it to the type you stored.
+- Rules run in array order. Set the value before the rule that reads it.
+- A native handler reads the same map through its third argument: `(request, event, ctx)`.
 
-- **A `defineProxy()` rule** gets the context as its second argument: `(request, context, event)`. Use this when the rule needs the context.
-- **A plain function** gets it as an optional third argument: `(request, event, context)`. Use this when a native handler needs it. Next.js itself never passes the third argument, so the plain function still works as a native handler.
+### Optional: `createContext`
 
-Two rules to keep in mind:
+`createContext` creates the context object yourself. Use it when every rule should start with the same typed object, such as a request ID:
 
-- The context type you declare in `defineProxy<Ctx>` has to match the type returned by `createContext`. If it does not, TypeScript reports an error.
-- Rules run in array order. A rule that sets a value must come before the rule that reads it.
+```ts
+type Ctx = { requestId: string }
 
-If a handler needs no context, do not use `defineProxy()`. A plain function is enough.
+export default chain([requestLog, authProxy], {
+  createContext: (req): Ctx => ({
+    requestId: req.headers.get('x-request-id') ?? crypto.randomUUID(),
+  }),
+})
+```
+
+Rules declared with `defineProxy<Ctx>` need a matching `createContext`. TypeScript reports an error otherwise.
 
 ## Continuing and stopping
 

@@ -79,7 +79,8 @@ function compileRegexPath(pattern: RegExp): RegExp {
   const start = hasStart || wrapFull ? '^' : ''
   const end = hasEnd || wrapFull ? '$' : ''
 
-  return toStatelessRegExp(new RegExp(`${start}${source}${end}`, pattern.flags))
+  // Group the body so top-level alternation stays inside the anchors.
+  return toStatelessRegExp(new RegExp(`${start}(?:${source})${end}`, pattern.flags))
 }
 
 function compileStringPath(pattern: string): RegExp {
@@ -243,8 +244,22 @@ export function normalizeHost(raw: string | null | undefined): string | null {
     const end = first.indexOf(']')
     return end === -1 ? first : first.slice(1, end)
   }
-  const withoutPort = first.replace(/:\d+$/, '')
+  const withoutPort = first.replace(/:\d+$/, '').replace(/\.$/, '')
   return withoutPort || null
+}
+
+/**
+ * Path used for scope matching: percent-decoded, without trailing slashes.
+ * This is the form Next.js resolves to a page. Returns null for malformed encoding.
+ */
+export function canonicalPathname(pathname: string): string | null {
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(pathname)
+  } catch {
+    return null
+  }
+  return decoded.length > 1 ? decoded.replace(/\/+$/, '') || '/' : decoded
 }
 
 function scopeKey(scope: CompiledScope): string {

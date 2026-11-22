@@ -8,6 +8,7 @@ import { applyFolderPrefix, physicalFolderPrefix } from './host-folder-prefix'
 import { createConsoleLogger, formatPipelineLine } from './logger'
 import {
   assertIncludeExcludeNoOverlap,
+  canonicalPathname,
   normalizeHost,
   ruleLabel,
   ruleMatches,
@@ -33,6 +34,11 @@ import type {
   ProxyPathFilter,
   ProxyRule,
 } from './types'
+
+/** NextResponse.next() sets x-middleware-next; it continues the pipeline. */
+function isNextResponse(value: unknown): boolean {
+  return value instanceof Response && value.headers.get('x-middleware-next') === '1'
+}
 
 function isPathFilter(value: unknown): value is ProxyPathFilter {
   if (value === null || typeof value !== 'object') return false
@@ -220,7 +226,15 @@ export function proxyChain<TContext>(
         const reqHost = normalizeHost(
           activeReq.headers.get('host') ?? activeReq.headers.get('x-forwarded-host')
         )
-        if (!ruleMatches(activeReq.nextUrl.pathname, reqHost, rule)) continue
+        // Match the decoded path Next.js resolves; a raw, encoded path would skip include-scoped rules.
+        const matchPath = canonicalPathname(activeReq.nextUrl.pathname)
+        if (matchPath === null) {
+          return new NextResponse('Bad Request', {
+            status: 400,
+            headers: { 'content-type': 'text/plain; charset=utf-8' },
+          })
+        }
+        if (!ruleMatches(matchPath, reqHost, rule)) continue
 
         const startedAt = debug ? performance.now() : 0
         let raw: NextResponse | Response | NextResult | undefined | void
@@ -236,7 +250,8 @@ export function proxyChain<TContext>(
             try {
               const recovered = await config.onError(err, i, activeReq, ctx)
               if (recovered == null) return safeInternalError()
-              if (isNextResult(recovered)) {
+              // NextResponse.next() is a Response; treat it as continuation, not a stop.
+              if (isNextResult(recovered) || isNextResponse(recovered)) {
                 raw = recovered
               } else if (recovered instanceof Response) {
                 headerWrites.push({
@@ -333,6 +348,16 @@ export function proxyChain<TContext>(
           continue
         }
 
+        // Stop responses must not carry Next.js request-override headers into routing.
+        for (const key of [...outcome.response.headers.keys()]) {
+          const lower = key.toLowerCase()
+          if (
+            lower === 'x-middleware-override-headers' ||
+            lower.startsWith('x-middleware-request-')
+          ) {
+            outcome.response.headers.delete(key)
+          }
+        }
         headerWrites.push({
           ruleIndex: i,
           ruleName: label,
@@ -427,7 +452,17 @@ export function proxyChain<TContext>(
       if (config.onError) {
         try {
           const recovered = await config.onError(err, -1, materializeRequest(), ctx)
-          if (recovered instanceof Response) return recovered
+          if (recovered instanceof Response) {
+            return finalizeResponse(
+              recovered,
+              headerWrites,
+              cookieWrites,
+              headerMergeStrategy,
+              cookieMergeStrategy,
+              logger,
+              debug
+            )
+          }
         } catch {
           /* fall through to safe 500 */
         }

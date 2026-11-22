@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `onError` returning `NextResponse.next()` continues the pipeline at rule level, as `next()` does. Previously it stopped the chain and skipped later rules (including auth) while still returning `next`.
+- Engine-level `onError` responses merge headers and cookies from earlier rules.
+- Scope matching uses the percent-decoded, trailing-slash-free path. `include: path("/admin/**")` no longer misses `/%61dmin/…` or `/admin/`.
+- Malformed percent-encoding returns `400` instead of skipping rules.
+- Regex path patterns keep top-level alternation inside their anchors (`path(/\/public|\/static/)` no longer matches `/admin/static`).
+- A trailing dot in the `Host` header is ignored when matching host scopes.
+
+### Security
+
+- CI workflow: read-only `GITHUB_TOKEN` permissions, no persisted checkout credentials, actions pinned to commit SHAs.
+
 ## [1.0.5] - 2026-10-29
 
 ### Changed

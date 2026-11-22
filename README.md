@@ -92,6 +92,8 @@ const adminRule = apiAuth({
 - `path("/users/:id")` — one segment (no capture groups; matching only)
 - `path(/^\/foo$/)` — user anchors are kept (`/foo` yes, `/x/foo` no)
 
+Scopes match the path Next.js resolves: percent-decoded, without trailing slashes (`/%61dmin/` matches `/admin`). A malformed percent-encoding returns `400`. Write patterns with decoded characters.
+
 ### Host Patterns
 
 - `host("admin.example.com")` — exact hostname (case-insensitive, port stripped at match time)
@@ -187,7 +189,7 @@ return next({
 | `onError` returns | Behavior |
 | :--- | :--- |
 | `Response` | Stop and return that response (headers/cookies still merged). |
-| `next()` | Continue to the next rule (rule-level errors only). |
+| `next()` or `NextResponse.next()` | Continue to the next rule (rule-level errors only). |
 | `undefined` / `void` / `null` | **Fail closed** — `500 Internal Server Error`. |
 | throws | `500 Internal Server Error`. |
 | omitted | Rule throw → `500`. |

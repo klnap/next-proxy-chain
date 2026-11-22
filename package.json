@@ -1,6 +1,6 @@
 {
   "name": "@klnap/next-proxy-chain",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Composable request pipeline for Next.js middleware and proxy.",
   "repository": {
     "type": "git",

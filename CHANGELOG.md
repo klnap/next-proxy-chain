@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-11-22
+
 ### Fixed
 
 - `onError` returning `NextResponse.next()` continues the pipeline at rule level, as `next()` does. Previously it stopped the chain and skipped later rules (including auth) while still returning `next`.

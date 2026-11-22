@@ -68,6 +68,31 @@ export type ProxyPathFilter = {
 }
 
 /**
+ * Type-only brand carried by defineProxy() rules. It records the context type a rule expects.
+ * Chain entries match on it as an object, which keeps handler parameters contextually typed.
+ */
+export declare const CONTEXT_BRAND: unique symbol
+
+/** Entry type for a defineProxy() rule that expects context TContext. */
+export type ContextRuleEntry<TContext = ProxyContext> = { readonly [CONTEXT_BRAND]: TContext }
+
+/**
+ * A native Next.js proxy handler: `(request, event)`. Use it in chain() without any wrapper.
+ */
+export type NativeProxy<TContext = ProxyContext> = (
+  req: NextRequest,
+  event: NextFetchEvent,
+  /** Request context from createContext. Next.js never passes it; chain() does, as the third argument. */
+  context: TContext
+) =>
+  | NextResponse
+  | Response
+  | NextResult
+  | undefined
+  | void
+  | Promise<NextResponse | Response | NextResult | undefined | void>
+
+/**
  * A single proxy execution function.
  */
 export type ProxyFn<TContext = ProxyContext> = (
@@ -85,7 +110,8 @@ export type ProxyFn<TContext = ProxyContext> = (
 export type ProxyRule<TContext = ProxyContext> = BaseProxyRule<ProxyFn<TContext>>
 
 export type DefinedProxy<TContext = ProxyContext> = ProxyFn<TContext> &
-  ((filter: ProxyPathFilter) => ProxyRule<TContext>)
+  ((filter: ProxyPathFilter) => ProxyRule<TContext>) &
+  ContextRuleEntry<TContext>
 
 export type Entry<TContext = ProxyContext> = ProxyFn<TContext> | ProxyRule<TContext>
 

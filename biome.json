@@ -91,7 +91,14 @@
   },
   "overrides": [
     {
-      "includes": ["scripts/**", "**/*.test.*", "**/*.spec.*", "tests/**", "release-consumers/**"],
+      "includes": [
+        "scripts/**",
+        "**/*.test.*",
+        "**/*.spec.*",
+        "tests/**",
+        "release-consumers/**",
+        "bench/**"
+      ],
       "linter": {
         "rules": {
           "suspicious": {

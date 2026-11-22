@@ -1,32 +1,20 @@
 # @klnap/next-proxy-chain
 
-Compose independent request rules for Next.js `proxy.ts` (or `middleware.ts`) without writing one long function.
+Run several Next.js `proxy.ts` (or `middleware.ts`) handlers as one chain. Each handler can be a plain native Next.js function, scoped to certain paths, and the chain stops or continues according to what each handler returns.
 
-Next.js gives each app one `proxy` export. Once that file also checks sessions, sets security headers, picks a locale, and redirects old URLs, the order of those checks matters, and each one has to know about the others. This package lets each concern be its own rule. The rules run in order, can be limited to certain paths or hosts, and share request-scoped state without any global variables.
+Next.js exports one proxy per app. As soon as the file contains an auth check, a locale redirect, and some security headers, the order matters and the pieces end up in one long function. This package keeps each handler separate and keeps the order visible.
 
 ```ts
-import { defineProxy, next, path, proxyChain } from '@klnap/next-proxy-chain'
-import { NextResponse } from 'next/server'
+import { chain } from '@klnap/next-proxy-chain'
 
-const securityHeaders = defineProxy('security-headers', () =>
-  next({ headers: { 'x-frame-options': 'DENY' } })
-)
-
-const requireSession = defineProxy('require-session', (req) => {
-  if (!req.cookies.has('session')) {
-    return NextResponse.redirect(new URL('/login', req.url))
-  }
-  return next()
-})
-
-export default proxyChain([securityHeaders, requireSession({ include: path('/dashboard/**') })])
-
-export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
-}
+export default chain([
+  intlProxy,
+  [authProxy, '/dashboard/**'],
+  securityProxy,
+])
 ```
 
-This sets `X-Frame-Options` on every response and sends visitors without a session cookie from `/dashboard` to `/login`. The security header comes first, so it also appears on the redirect.
+`intlProxy`, `authProxy` and `securityProxy` are ordinary Next.js proxy functions: `(request, event) => NextResponse | Response | undefined`. You do not wrap them, and you do not change what they return.
 
 ## Install
 
@@ -38,44 +26,148 @@ bun add @klnap/next-proxy-chain
 
 `next` is a peer dependency (`>=15.0.0`). The package has no runtime dependencies.
 
-## When to use it
+## Basic composition
 
-Use it when one Proxy file needs several independent concerns, for example:
+Pass handlers in the order they should run. Each one receives the native `(request, event)` arguments, so `event.waitUntil()` works.
 
-- a session check on some routes and not others,
-- security headers on every response,
-- a locale rewrite,
-- a redirect from old URLs,
-- request IDs passed to route handlers.
+```ts
+import { chain } from '@klnap/next-proxy-chain'
+import { NextResponse } from 'next/server'
 
-A single redirect rule does not need it. Write `NextResponse.redirect` directly in `proxy.ts`.
+function analytics(request, event) {
+  event.waitUntil(sendPageView(request.nextUrl.pathname))
+  return NextResponse.next()
+}
 
-It is a composition layer, not a security product. It does not authenticate users, verify tokens, or replace Next.js routing. It runs the rules you write, in the order you list them.
+export default chain([analytics, intlProxy, securityProxy])
+```
 
-## How it works
+A handler continues the chain by returning `undefined` or `NextResponse.next()`. A handler stops the chain by returning a `Response`, `NextResponse.redirect()`, `NextResponse.json()`, or `Response.redirect()`. The rest of this page explains each case.
 
-- Rules run in array order. A rule continues by returning `next()` or nothing, and stops the chain by returning a `Response`.
-- A rule can be scoped with `include` and `exclude` paths or hosts. Rules that do not match are skipped.
-- Headers and cookies set by earlier rules are kept on the final response, unless a later rule overrides them.
-- Each request gets its own context. Rules can share values through it without globals.
-- Errors and timeouts can be recovered with `onError`. By default they produce a 500.
+## Scoped handlers
 
-[Concepts](https://github.com/klnap/next-proxy-chain/blob/main/docs/concepts.md) explains the execution model in full.
+Wrap a handler in a tuple to run it only for some paths or hosts:
+
+```ts
+export default chain([
+  // Only /dashboard and its children.
+  [authProxy, '/dashboard/**'],
+
+  // Everything except /login.
+  [adminProxy, { exclude: '/admin/login' }],
+
+  // RegExp works too.
+  [privateProxy, { exclude: /^\/public(\/.*)?$/ }],
+
+  // Several patterns and a host.
+  [billingProxy, { include: { host: 'app.example.com', path: ['/billing/**', '/invoices/**'] } }],
+])
+```
+
+Path patterns:
+
+- `*` matches one segment: `/api/*` matches `/api/users`, not `/api/users/123`.
+- `**` matches any depth, including zero segments: `/docs/**` matches `/docs` and `/docs/a/b`.
+- `:name` matches one segment and does not capture a value.
+- A RegExp is matched against the decoded path. Anchor it with `^` and `$` for an exact match.
+
+Segments are compared whole. `/tenant` does not match `/tenant-other`. A pattern such as `/files/*.pdf` throws when the chain is created, because wildcards must be whole segments.
+
+## Context and typed rules
+
+A handler that needs per-request state is written with `defineProxy()`. It receives a context object as its second argument:
+
+```ts
+import { chain, defineProxy, next } from '@klnap/next-proxy-chain'
+
+type Session = { user?: string }
+
+const readSession = defineProxy<Session>('read-session', (request, session) => {
+  session.user = request.cookies.get('user')?.value
+  return next()
+})
+
+const requireUser = defineProxy<Session>('require-user', (request, session) => {
+  if (!session.user) return NextResponse.redirect(new URL('/login', request.url))
+  return next()
+})
+
+export default chain(
+  [readSession, [requireUser, '/dashboard/**']],
+  { createContext: (): Session => ({}) }
+)
+```
+
+- The context is created for each request and is not shared between requests.
+- `createContext` is required when a rule declares a context type. Passing a rule that expects a different type is a compile-time error.
+- Rules run in array order. Put the rule that sets a value before the rule that reads it.
+
+Use `defineProxy()` only when you need the context or a named rule. A plain function is enough for everything else.
+
+## Continuing and stopping
+
+| A handler returns | Effect |
+| :--- | :--- |
+| `undefined` or nothing | Continue. |
+| `NextResponse.next()` | Continue. Its request-header overrides are kept. |
+| `NextResponse.rewrite(url)` | Continue. The rewrite is applied at the end unless a later handler stops. |
+| `NextResponse.redirect(url)`, `NextResponse.json()`, `Response`, `Response.redirect()` | Stop and return that response. |
+| `next({ request, headers })` | Continue, and apply the given headers. This is a library token; plain Next.js handlers should return `NextResponse.next()`. |
+| A thrown error or a rejected promise | Fail closed with `500`, unless `onError` is set. |
+
+Stopping is immediate. A handler after a stopping handler does not run, so put checks that must always run before any handler that might answer the request.
+
+Headers and cookies that earlier handlers set are kept on the response that stops the chain. Handlers after it do not contribute.
+
+## Options
+
+`chain(entries, options)` accepts the same options as `proxyChain`:
+
+| Option | Purpose |
+| :--- | :--- |
+| `createContext` | Creates the context for each request. Required for typed rules. |
+| `onError` | Returns a `Response` to stop with, `next()` to continue, or nothing for a `500`. |
+| `ruleTimeoutMs` | Time limit per handler. `0` (default) disables it. |
+| `headerMergeStrategy`, `cookieMergeStrategy` | How conflicting response headers and cookies are resolved. |
+| `requestHeaderPolicy` | Which request headers `next({ request })` may set. |
+| `debug`, `logger` | One log line per handler, and a custom logger. |
+| `strictOverrideCheck` | Throw at startup if Next.js does not apply request overrides. |
+| `hostFolderHeader` | Opt-in multi-tenant folder prefix for rewrites. |
+
+The full reference is in [docs/api.md](https://github.com/klnap/next-proxy-chain/blob/main/docs/api.md).
+
+## Native compatibility
+
+- A plain handler gets `(request, event)`, exactly as in a native `proxy.ts`. `chain()` also passes the request context as an optional third argument, which Next.js never uses.
+- `export default chain([...])` is the default export that Next.js expects. Put `export const config = { matcher }` next to it as usual.
+- Handlers can be async.
+- Handlers returned by other packages work unchanged, if they follow the native signature.
+
+`proxyChain()` is a deprecated alias that is still exported and unchanged. Its plain functions receive `(request, context, event)`. Use `chain()` in new code.
 
 ## Documentation
 
-- [Concepts](https://github.com/klnap/next-proxy-chain/blob/main/docs/concepts.md): rule order, continuation, scoping, headers, cookies, errors.
-- [Guides](https://github.com/klnap/next-proxy-chain/blob/main/docs/guides.md): recipes for common tasks, with links to runnable examples.
+- [Concepts](https://github.com/klnap/next-proxy-chain/blob/main/docs/concepts.md): execution order, continuation, scoping, headers, cookies, errors.
+- [Guides](https://github.com/klnap/next-proxy-chain/blob/main/docs/guides.md): recipes for common tasks.
 - [API reference](https://github.com/klnap/next-proxy-chain/blob/main/docs/api.md): every export and option.
 - [Security](https://github.com/klnap/next-proxy-chain/blob/main/docs/security.md): trust boundaries and safe usage.
 
-Runnable examples live in [`examples/`](https://github.com/klnap/next-proxy-chain/blob/main/examples/). They are type-checked and tested in this repository.
+Runnable examples are in [`examples/`](https://github.com/klnap/next-proxy-chain/blob/main/examples/).
+
+## Migration
+
+No change is required. `proxyChain()` and `defineProxy()` keep working. To move to `chain()`:
+
+1. Replace `proxyChain(entries)` with `chain(entries)`.
+2. Plain functions that used the old `(request, context, event)` signature: rewrite them with `defineProxy()`, which keeps that signature.
+3. Replace `path()` and `host()` helpers with strings, arrays, or objects where you like. They still work.
 
 ## Compatibility
 
-- Next.js: peer `>=15.0.0`. The test suite runs against Next.js 16.3.2. Next.js 15 `middleware.ts` is covered by integration tests that model its behavior, not by a Next.js 15 application.
+- Next.js: peer `>=15.0.0`. The test suite runs against Next.js 16.3.2 through a live app. Next.js 15 is covered by integration tests that model its behavior; it has not been run as a live application.
 - Node.js `>=20`, Bun `>=1`.
-- Next.js 16 runs `proxy.ts` on the Node.js runtime by default. The package uses only Web platform APIs (`Headers`, `Request`, `Response`, `URL`), so it should also work on the Edge runtime, but that is not tested here.
+- Next.js 16 runs `proxy.ts` on the Node.js runtime by default. The package uses only Web platform APIs, so it should also run on the Edge runtime for Next.js 15 `middleware.ts`, but that is not tested here.
+- Framework-neutral use (Express, Hono) is not supported. The package depends on Next.js request and response semantics.
 
 ## Links
 

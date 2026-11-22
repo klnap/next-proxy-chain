@@ -4,6 +4,28 @@ All notable changes to `@klnap/next-proxy-chain` will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - unreleased
+
+### Added
+
+- `chain(entries, options?)`: the recommended entry point. Plain functions receive the native `(request, event)` arguments. `defineProxy()` rules receive `(request, context, event)`.
+- Scoped tuples: `[handler, scope]`, where `scope` is a path string, an array, a RegExp, or an object `{ include?, exclude? }`. Include objects accept `host`.
+- Exported types `ChainEntry`, `ChainScope`, and `NativeProxy`.
+- `chain()` passes the request context to plain handlers as an optional third argument: `(request, event, context)`.
+
+### Deprecated
+
+- `proxyChain()` is deprecated in favor of `chain()`. It keeps its behavior. Its removal would be a major release.
+
+### Fixed
+
+- A native Next.js handler passed to `proxyChain()` received the context instead of `event`, so `event.waitUntil()` failed and the request returned `500`. `chain()` avoids this. `proxyChain()` keeps its signature.
+
+### Documentation
+
+- README rewritten to start with `chain()`. Advanced features follow in separate sections.
+- `docs/api.md` and `docs/concepts.md` describe native handlers and context rules.
+
 ## [1.0.7] - 2026-11-22
 
 ### Fixed

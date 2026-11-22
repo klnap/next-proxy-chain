@@ -26,3 +26,6 @@ export const DEFAULT_BLOCKED_REQUEST_HEADERS: readonly string[] = Object.freeze(
   'x-middleware-next',
   'x-middleware-override-headers',
 ])
+
+/** Marks rules created by defineProxy(). chain() uses it to tell them apart from native handlers. */
+export const CONTEXT_RULE: unique symbol = Symbol.for('proxy-chain.context-rule')

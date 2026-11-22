@@ -5,6 +5,7 @@ describe('public API surface', () => {
   it('exports only documented runtime symbols from the package entry', () => {
     expect(Object.keys(api).sort()).toEqual([
       'RuleTimeoutError',
+      'chain',
       'createProxyContext',
       'defineProxy',
       'host',

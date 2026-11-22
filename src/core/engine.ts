@@ -2,6 +2,7 @@ import type { NextFetchEvent } from 'next/server'
 import { NextRequest, NextResponse } from 'next/server'
 
 import { isNextResult } from './actions'
+import { CONTEXT_RULE } from './constants'
 import { createProxyContext } from './context'
 import { cookieItemsFromHeaders, headersDiffer, responseHeaderItems } from './headers'
 import { applyFolderPrefix, isInsideFolder, physicalFolderPrefix } from './host-folder-prefix'
@@ -104,6 +105,7 @@ export function defineProxy<TContext = ProxyContext>(
     value: defaultName ?? '',
     configurable: true,
   })
+  Object.defineProperty(proxy, CONTEXT_RULE, { value: true })
   return proxy
 }
 
@@ -145,6 +147,7 @@ function resolveConfig<TContext>(
  *   i18nRule,
  * ])
  */
+/** @deprecated Use chain(). Plain functions here receive (request, context, event). */
 export function proxyChain(entries: Entry<ProxyContext>[]): ProxyHandler
 export function proxyChain(
   options: ProxyChainOptions<ProxyContext>,

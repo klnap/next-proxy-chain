@@ -12,6 +12,13 @@ This page describes how a request moves through a chain. Read it before writing 
 
 If every rule continues, the chain ends with `NextResponse.next()`, or with a rewrite if a rule staged one.
 
+## Two kinds of rules
+
+- A **native handler** is a plain function `(request, event)`. `chain()` passes the native arguments unchanged, so a handler written for `proxy.ts` works as it is.
+- A **context rule** is created with `defineProxy()`. It receives `(request, context, event)`. The context is created for each request by `createContext`.
+
+Both kinds run in array order, follow the same continuation rules, and can be scoped with a tuple.
+
 ## Continue or stop
 
 | A rule returns | Effect |

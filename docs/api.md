@@ -15,6 +15,37 @@ import {
 } from '@klnap/next-proxy-chain'
 ```
 
+## `chain`
+
+Composes native Next.js proxy handlers, rules, and scoped tuples into one handler. This is the recommended entry point.
+
+```ts
+chain(entries)
+chain(entries, options)
+chain<TContext>(entries, { createContext, ...options })
+```
+
+`entries` is an array. Each entry is one of:
+
+| Entry | Receives | Notes |
+| :--- | :--- | :--- |
+| A plain function `(request, event, context?)` | `request`, `event`, and `context` as an optional third argument | The native Next.js signature. Next.js passes only two arguments; `chain()` adds the request context third. |
+| A `defineProxy()` rule | `request`, `context`, `event` | Use for typed per-request state. Needs `createContext` when it declares a context type. |
+| A tuple `[handler, scope]` | As above, only when the scope matches | `scope` is a path string, an array of paths, a RegExp, or an object `{ include?, exclude? }`. Include objects can also contain `host`. |
+| A rule object `{ run, include, exclude, name }` | `request`, `context`, `event` | The same as `proxyChain`. |
+
+`chain()` runs entries in array order. It returns a function that Next.js calls as `default` export of `proxy.ts` or `middleware.ts`.
+
+```ts
+export default chain([
+  intlProxy,
+  [authProxy, '/dashboard/**'],
+  securityProxy,
+])
+```
+
+A plain function never receives the context, so it is always safe to pass a native handler. `proxyChain()` is different: its plain functions receive `(request, context, event)`.
+
 ## `proxyChain`
 
 Builds the function that Next.js calls for each request.
@@ -35,6 +66,8 @@ export default proxyChain([...rules])
 ```
 
 ## `defineProxy`
+
+Creates a rule that receives the request context. Plain functions do not need it; use it only for typed per-request state or a named rule.
 
 Creates a reusable rule. Calling the result with a scope returns a scoped rule.
 

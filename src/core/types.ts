@@ -20,7 +20,7 @@ export type NextResult = NextOptions & { readonly [NEXT]: true }
  * Shared state for an individual request pipeline execution.
  * Backed by Map to eliminate prototype-pollution risks.
  */
-export type ProxyContext = Map<PropertyKey, unknown>
+export type ProxyContext = Map<string, unknown>
 
 export type ProxyResult<TResponse = NextResponse | Response> =
   | TResponse

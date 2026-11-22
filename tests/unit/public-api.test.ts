@@ -6,7 +6,6 @@ describe('public API surface', () => {
     expect(Object.keys(api).sort()).toEqual([
       'RuleTimeoutError',
       'chain',
-      'contextKey',
       'createProxyContext',
       'defineProxy',
       'host',

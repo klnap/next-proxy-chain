@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `**` path scopes match decoded control characters such as `%0A` and `%E2%80%A8` (a regression from 1.0.6, where `.` skipped them).
+- An engine-level `onError` (after all rules ran) returning `NextResponse.next()` now returns `500` instead of passing the request through without later rules.
+- Next.js routing headers (`x-middleware-override-headers`, `x-middleware-request-*`) are removed from responses returned by `onError`, as they already were for rule responses.
+
+### Documentation
+
+- README rewritten around adoption: what the package does, when to use it, a quick start that puts the security header first.
+- New `docs/` section: concepts (execution model), guides, API reference, security notes.
+- `examples/` contains type-checked examples, each tested in `tests/docs/`.
+
 ## [1.0.6] - 2026-11-22
 
 ### Fixed

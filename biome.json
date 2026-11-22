@@ -127,7 +127,9 @@
         "**/middleware.ts",
         "**/proxy.ts",
         "**/loader.ts",
-        "src/types/**"
+        "src/types/**",
+        "examples/**",
+        "tests/docs/**"
       ],
       "linter": {
         "rules": {

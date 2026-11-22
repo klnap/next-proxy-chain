@@ -13,8 +13,12 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
-    "declarationMap": true
+    "declarationMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@klnap/next-proxy-chain": ["./src/index.ts"]
+    }
   },
-  "include": ["src/**/*", "tests/**/*"],
+  "include": ["src/**/*", "tests/**/*", "examples/**/*"],
   "exclude": ["node_modules", "dist"]
 }

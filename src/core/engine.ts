@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { isNextResult } from './actions'
 import { createProxyContext } from './context'
 import { cookieItemsFromHeaders, headersDiffer, responseHeaderItems } from './headers'
-import { applyFolderPrefix, physicalFolderPrefix } from './host-folder-prefix'
+import { applyFolderPrefix, isInsideFolder, physicalFolderPrefix } from './host-folder-prefix'
 import { createConsoleLogger, formatPipelineLine } from './logger'
 import {
   assertIncludeExcludeNoOverlap,
@@ -210,6 +210,18 @@ export function proxyChain<TContext>(
     const headerWrites: EntryWrite[] = []
     const cookieWrites: EntryWrite[] = []
 
+    // Fail-closed 500 that keeps the headers and cookies earlier rules set (for example CSP).
+    const failClosed = () =>
+      finalizeResponse(
+        safeInternalError(),
+        headerWrites,
+        cookieWrites,
+        headerMergeStrategy,
+        cookieMergeStrategy,
+        logger,
+        debug
+      )
+
     const materializeRequest = (): NextRequest => {
       if (!pendingRequestOverrides) return currentReq
       if (!headersDiffer(currentReq.headers, pendingRequestOverrides)) {
@@ -247,14 +259,14 @@ export function proxyChain<TContext>(
     ): Promise<{ raw: RuleRaw } | { response: NextResponse | Response }> => {
       if (!config.onError) {
         logger.error({ rule: label, err }, 'rule threw')
-        return { response: safeInternalError() }
+        return { response: failClosed() }
       }
       try {
         const recovered = await config.onError(err, i, req, ctx)
-        if (recovered == null) return { response: safeInternalError() }
+        if (recovered == null) return { response: failClosed() }
         // NextResponse.next() is a Response; treat it as continuation, not a stop.
         if (isNextResult(recovered) || isNextResponse(recovered)) return { raw: recovered }
-        if (!(recovered instanceof Response)) return { response: safeInternalError() }
+        if (!(recovered instanceof Response)) return { response: failClosed() }
 
         stripRoutingOverrides(recovered)
         headerWrites.push({
@@ -295,7 +307,7 @@ export function proxyChain<TContext>(
         }
       } catch (onErrorErr) {
         logger.error({ rule: label, err: onErrorErr }, 'onError handler threw')
-        return { response: safeInternalError() }
+        return { response: failClosed() }
       }
     }
 
@@ -452,7 +464,7 @@ export function proxyChain<TContext>(
           finalRewriteUrl = applyFolderPrefix(finalRewriteUrl, cleanFolder, finalReq.url)
         } else {
           const currentPath = finalReq.nextUrl.pathname
-          if (!currentPath.startsWith(cleanFolder)) {
+          if (!isInsideFolder(currentPath, cleanFolder)) {
             const targetUrl = finalReq.nextUrl.clone()
             targetUrl.pathname = cleanFolder + (currentPath === '/' ? '' : currentPath)
             finalRewriteUrl = targetUrl.toString()
@@ -460,12 +472,14 @@ export function proxyChain<TContext>(
         }
       }
 
+      // Forwarding unchanged headers would encode every request header as x-middleware-request-*.
+      const requestInit = finalReq !== req ? { request: { headers: finalReq.headers } } : undefined
       let final: NextResponse
       if (finalRewriteUrl) {
         const rewriteTarget = new URL(finalRewriteUrl, finalReq.url)
-        final = NextResponse.rewrite(rewriteTarget, { request: { headers: finalReq.headers } })
+        final = NextResponse.rewrite(rewriteTarget, requestInit)
       } else {
-        final = NextResponse.next({ request: { headers: finalReq.headers } })
+        final = NextResponse.next(requestInit)
       }
 
       return finalizeResponse(
@@ -499,7 +513,7 @@ export function proxyChain<TContext>(
           /* fall through to safe 500 */
         }
       }
-      return safeInternalError()
+      return failClosed()
     }
   }
 }

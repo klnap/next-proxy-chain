@@ -43,7 +43,14 @@ function runOverrideProbe(): boolean {
   const testRes = NextResponse.next({
     request: { headers: new Headers({ 'x-proxy-chain-probe': '1' }) },
   })
-  return testRes.headers.get('x-middleware-next') === '1'
+  const overridden = (testRes.headers.get('x-middleware-override-headers') ?? '')
+    .split(',')
+    .map((name) => name.trim())
+  return (
+    testRes.headers.get('x-middleware-next') === '1' &&
+    overridden.includes('x-proxy-chain-probe') &&
+    testRes.headers.get('x-middleware-request-x-proxy-chain-probe') === '1'
+  )
 }
 
 function throwForCachedProbe(probe: Exclude<CachedOverrideProbe, { kind: 'supported' }>): never {
@@ -207,6 +214,18 @@ export function finalizeResponse(
     if (!headers.has(key)) dropHeaders.push(key)
   }
 
-  applyMergedToResponse(res, headers, cookies, dropHeaders)
-  return res
+  try {
+    applyMergedToResponse(res, headers, cookies, dropHeaders)
+    return res
+  } catch (err) {
+    // Node's Response.redirect() and fetch() responses have immutable headers. Copy them and retry.
+    if (!(err instanceof TypeError)) throw err
+    const copy = new Response(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: new Headers(res.headers),
+    })
+    applyMergedToResponse(copy, headers, cookies, dropHeaders)
+    return copy
+  }
 }

@@ -55,6 +55,11 @@ function isScopeObject(
 }
 
 function segmentToRegex(segment: string): string {
+  if (segment.includes('*') && segment !== '*' && segment !== '**') {
+    throw new Error(
+      `[proxy-chain] path segment "${segment}" mixes a wildcard with other characters. Use a whole-segment * or **.`
+    )
+  }
   if (segment === '**') return '(?:[\\s\\S]*)'
   if (segment === '*') return '[^/]+'
   if (segment.startsWith(':')) return '[^/]+'
@@ -177,11 +182,19 @@ export function toRule<TFn>(entry: TFn | BaseProxyRule<TFn>): BaseProxyRule<TFn>
       : undefined
   const name = extractMeaningfulName(rule.name) ?? runName
 
+  // Plain objects bypass the TypeScript check. A scope without host or path would match everything.
   const harden = (scopes: CompiledScope[] | undefined) =>
-    scopes?.map((s) => ({
-      host: s.host ? toStatelessRegExp(s.host) : undefined,
-      path: s.path ? toStatelessRegExp(s.path) : undefined,
-    }))
+    scopes?.map((s) => {
+      if (!s.host && !s.path) {
+        throw new Error(
+          '[proxy-chain] include/exclude scope needs `host` or `path`. Build scopes with path() or host().'
+        )
+      }
+      return {
+        host: s.host ? toStatelessRegExp(s.host) : undefined,
+        path: s.path ? toStatelessRegExp(s.path) : undefined,
+      }
+    })
 
   return {
     ...rule,

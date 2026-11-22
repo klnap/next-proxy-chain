@@ -12,9 +12,9 @@ export class RuleTimeoutError extends Error {
 
 /** Fail fast when ruleTimeoutMs is a non-finite number (NaN / ±Infinity). */
 export function assertFiniteRuleTimeoutMs(ruleTimeoutMs: number | undefined): void {
-  if (ruleTimeoutMs != null && !Number.isFinite(ruleTimeoutMs)) {
+  if (ruleTimeoutMs != null && (!Number.isFinite(ruleTimeoutMs) || ruleTimeoutMs < 0)) {
     throw new RangeError(
-      `[proxy-chain] ruleTimeoutMs must be a finite positive number, got ${ruleTimeoutMs}`
+      `[proxy-chain] ruleTimeoutMs must be a finite number >= 0 (0 disables), got ${ruleTimeoutMs}`
     )
   }
 }

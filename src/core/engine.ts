@@ -37,14 +37,20 @@ import type {
 
 /** NextResponse.next() sets x-middleware-next; it continues the pipeline. */
 function isNextResponse(value: unknown): boolean {
-  return value instanceof Response && value.headers.get('x-middleware-next') === '1'
+  return value instanceof NextResponse && value.headers.get('x-middleware-next') === '1'
 }
 
 /** Terminal responses must not carry Next.js request-override headers into routing. */
 function stripRoutingOverrides(res: Response): void {
+  // A plain Response is not a Next.js continuation, so every x-middleware-* control header goes.
+  const plain = !(res instanceof NextResponse)
   for (const key of [...res.headers.keys()]) {
     const lower = key.toLowerCase()
-    if (lower === 'x-middleware-override-headers' || lower.startsWith('x-middleware-request-')) {
+    if (
+      lower === 'x-middleware-override-headers' ||
+      lower.startsWith('x-middleware-request-') ||
+      (plain && (lower === 'x-middleware-next' || lower === 'x-middleware-rewrite'))
+    ) {
       res.headers.delete(key)
     }
   }

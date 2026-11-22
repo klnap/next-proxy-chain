@@ -111,4 +111,22 @@ describe('onError recovery semantics', () => {
     expect(res.headers.get('x-middleware-request-cookie')).toBeNull()
     expect(res.headers.get('x-middleware-override-headers')).toBeNull()
   })
+
+  it('does not honor x-middleware-rewrite from a relayed plain Response', async () => {
+    const upstream = defineProxy(
+      'upstream',
+      () =>
+        new Response('upstream body', {
+          status: 200,
+          headers: { 'x-middleware-rewrite': '/internal/admin' },
+        })
+    )
+    const auth = defineProxy('auth', () => new Response('denied', { status: 403 }))
+    const handler = proxyChain({ logger: silent }, [upstream, auth])
+
+    const res = await handler(new NextRequest('http://localhost/x'), fakeEvent)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('upstream body')
+    expect(res.headers.get('x-middleware-rewrite')).toBeNull()
+  })
 })

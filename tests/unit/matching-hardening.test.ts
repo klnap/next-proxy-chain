@@ -59,4 +59,14 @@ describe('scope matching hardening', () => {
       expect(res.status).toBe(403)
     }
   })
+
+  it('rejects a bare object scope instead of matching every request', () => {
+    const rule = { run: () => next(), include: [path('/x/**')] as never }
+    expect(() => proxyChain({ logger: silent }, [rule as never])).toThrow(/needs `host` or `path`/)
+  })
+
+  it('rejects a path segment that mixes a wildcard with other characters', () => {
+    const auth = defineProxy('auth', () => new Response('denied', { status: 403 }))
+    expect(() => auth({ include: '/files/*.pdf' })).toThrow(/mixes a wildcard/)
+  })
 })

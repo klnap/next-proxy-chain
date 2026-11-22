@@ -135,7 +135,8 @@ export function resolveRuleResult(
     }
   }
 
-  if (res.headers.get('x-middleware-next') === '1') {
+  // Only NextResponse may request continuation. A relayed plain Response must not rewrite or continue the chain.
+  if (res instanceof NextResponse && res.headers.get('x-middleware-next') === '1') {
     let request: Headers | undefined
     const decoded = decodeOverriddenRequestHeaders(res.headers)
     if ([...decoded.keys()].length > 0) {
@@ -152,7 +153,7 @@ export function resolveRuleResult(
     }
   }
 
-  const rewriteHeader = res.headers.get('x-middleware-rewrite')
+  const rewriteHeader = res instanceof NextResponse ? res.headers.get('x-middleware-rewrite') : null
   if (rewriteHeader && (res.status === 200 || !res.status)) {
     let request: Headers | undefined
     const decoded = decodeOverriddenRequestHeaders(res.headers)

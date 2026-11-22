@@ -4,32 +4,6 @@ All notable changes to `@klnap/next-proxy-chain` will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- `**` path scopes match decoded control characters such as `%0A` and `%E2%80%A8` (a regression from 1.0.6, where `.` skipped them).
-- An engine-level `onError` (after all rules ran) returning `NextResponse.next()` now returns `500` instead of passing the request through without later rules.
-- Next.js routing headers (`x-middleware-override-headers`, `x-middleware-request-*`) are removed from responses returned by `onError`, as they already were for rule responses.
-
-### Security
-
-- Bare object scopes (`{ run, include }` with a RegExp instead of `path()`/`host()`) throw at startup. Before, they matched every request.
-- Plain `Response` objects cannot continue the chain or request a rewrite through `x-middleware-next` or `x-middleware-rewrite`. Only `NextResponse` can. Relayed upstream responses keep their body.
-- Path segments that mix a wildcard with other characters (for example `/files/*.pdf`) throw at startup. Before, they matched a literal and silently never ran the rule.
-- `ruleTimeoutMs` rejects negative values. Before, they silently disabled the timeout.
-- `**` path scopes match decoded control characters. Release 1.0.6 let `/admin/%0Asecret` past an auth rule, confirmed on a live Next.js 16.3.2 app. This was fixed before 1.0.6 was published.
-- A malformed rule return (for example a string) is reported to `onError` with that rule's index instead of `-1`.
-
-### Documentation
-
-- Example 02 no longer gates admin routes on cookie presence or host. Example 05 has a matcher.
-- API notes: `headers` on proxy responses, one-sided RegExp anchors, `-1` error index, `*` and `**` as whole segments, Server Functions and matchers.
-
-- README rewritten around adoption: what the package does, when to use it, a quick start that puts the security header first.
-- New `docs/` section: concepts (execution model), guides, API reference, security notes.
-- `examples/` contains type-checked examples, each tested in `tests/docs/`.
-
 ## [1.0.6] - 2026-11-22
 
 ### Fixed
@@ -37,13 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `onError` returning `NextResponse.next()` continues the pipeline at rule level, as `next()` does. Previously it stopped the chain and skipped later rules (including auth) while still returning `next`.
 - Engine-level `onError` responses merge headers and cookies from earlier rules.
 - Scope matching uses the percent-decoded, trailing-slash-free path. `include: path("/admin/**")` no longer misses `/%61dmin/…` or `/admin/`.
+- `**` path scopes match decoded control characters such as `%0A` and `%E2%80%A8`. Before this fix, `/admin/%0Asecret` skipped an auth rule on a live Next.js 16.3.2 app.
 - Malformed percent-encoding returns `400` instead of skipping rules.
 - Regex path patterns keep top-level alternation inside their anchors (`path(/\/public|\/static/)` no longer matches `/admin/static`).
 - A trailing dot in the `Host` header is ignored when matching host scopes.
+- A malformed rule return (for example a string) is reported to `onError` with that rule's index instead of `-1`.
+- Next.js routing headers (`x-middleware-override-headers`, `x-middleware-request-*`) are removed from responses returned by `onError`, as they already were for rule responses.
 
 ### Security
 
+- Only `NextResponse` can continue the chain or request a rewrite through `x-middleware-next` or `x-middleware-rewrite`. A relayed plain `Response` keeps its body and cannot rewrite the request.
+- Bare object scopes (`{ run, include }` with a RegExp instead of `path()`/`host()`) throw at startup. Before, they matched every request.
+- Path segments that mix a wildcard with other characters (for example `/files/*.pdf`) throw at startup. Before, they matched a literal and silently never ran the rule.
+- `ruleTimeoutMs` rejects negative values. Before, they silently disabled the timeout.
 - CI workflow: read-only `GITHUB_TOKEN` permissions, no persisted checkout credentials, actions pinned to commit SHAs.
+
+### Documentation
+
+- README rewritten around adoption: what the package does, when to use it, a quick start that puts the security header first.
+- New `docs/` section: concepts (execution model), guides, API reference, security notes.
+- `examples/` contains type-checked examples, each tested in `tests/docs/`. The admin example no longer gates on cookie presence or host, and the locale rewrite example has a matcher.
+- API notes: `headers` on proxy responses, one-sided RegExp anchors, `-1` error index, `*` and `**` as whole segments, Server Functions and matchers.
 
 ## [1.0.5] - 2026-10-29
 

@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plain `Response` objects cannot continue the chain or request a rewrite through `x-middleware-next` or `x-middleware-rewrite`. Only `NextResponse` can. Relayed upstream responses keep their body.
 - Path segments that mix a wildcard with other characters (for example `/files/*.pdf`) throw at startup. Before, they matched a literal and silently never ran the rule.
 - `ruleTimeoutMs` rejects negative values. Before, they silently disabled the timeout.
+- `**` path scopes match decoded control characters. Release 1.0.6 let `/admin/%0Asecret` past an auth rule, confirmed on a live Next.js 16.3.2 app. This was fixed before 1.0.6 was published.
+- A malformed rule return (for example a string) is reported to `onError` with that rule's index instead of `-1`.
 
 ### Documentation
 

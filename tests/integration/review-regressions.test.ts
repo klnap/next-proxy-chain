@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { NextRequest } from 'next/server'
-import { defineProxy, next, proxyChain } from '../../src/index'
+import { chain as composeChain, defineHandler, next } from '../../src/index'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -25,11 +25,16 @@ const event = {} as never
 
 describe('external review regressions', () => {
   it('returns a Response.redirect() (immutable headers) without a 500', async () => {
-    const setHeader = defineProxy('header', () => next({ headers: { 'x-frame-options': 'DENY' } }))
-    const redirect = defineProxy('redirect', () =>
-      immutableResponse(null, { status: 302, headers: { location: 'https://example.com/' } })
-    )
-    const handler = proxyChain({ logger: silent }, [setHeader, redirect])
+    const setHeader = defineHandler({
+      name: 'header',
+      handler: () => next({ headers: { 'x-frame-options': 'DENY' } }),
+    })
+    const redirect = defineHandler({
+      name: 'redirect',
+      handler: () =>
+        immutableResponse(null, { status: 302, headers: { location: 'https://example.com/' } }),
+    })
+    const handler = composeChain([setHeader, redirect], { logger: silent })
     const res = await handler(new NextRequest('http://localhost/x'), event)
     expect(res.status).toBe(302)
     expect(res.headers.get('location')).toBe('https://example.com/')
@@ -37,29 +42,37 @@ describe('external review regressions', () => {
   })
 
   it('returns a fetch() response with immutable headers without a 500', async () => {
-    const fromFetch = defineProxy('fetch', () =>
-      immutableResponse('hello', { status: 200, headers: { 'content-type': 'text/plain' } })
-    )
-    const handler = proxyChain({ logger: silent }, [fromFetch])
+    const fromFetch = defineHandler({
+      name: 'fetch',
+      handler: () =>
+        immutableResponse('hello', { status: 200, headers: { 'content-type': 'text/plain' } }),
+    })
+    const handler = composeChain([fromFetch], { logger: silent })
     const res = await handler(new NextRequest('http://localhost/x'), event)
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('hello')
   })
 
   it('keeps earlier security headers on a 500 from a later rule', async () => {
-    const setHeader = defineProxy('header', () => next({ headers: { 'x-frame-options': 'DENY' } }))
-    const boom = defineProxy('boom', () => {
-      throw new Error('later rule failed')
+    const setHeader = defineHandler({
+      name: 'header',
+      handler: () => next({ headers: { 'x-frame-options': 'DENY' } }),
     })
-    const handler = proxyChain({ logger: silent }, [setHeader, boom])
+    const boom = defineHandler({
+      name: 'boom',
+      handler: () => {
+        throw new Error('later rule failed')
+      },
+    })
+    const handler = composeChain([setHeader, boom], { logger: silent })
     const res = await handler(new NextRequest('http://localhost/x'), event)
     expect(res.status).toBe(500)
     expect(res.headers.get('x-frame-options')).toBe('DENY')
   })
 
   it('does not forward request overrides when no rule changed a request header', async () => {
-    const pass = defineProxy('pass', () => next())
-    const handler = proxyChain({ logger: silent }, [pass])
+    const pass = defineHandler({ name: 'pass', handler: () => next() })
+    const handler = composeChain([pass], { logger: silent })
     const req = new NextRequest('http://localhost/x', {
       headers: { accept: 'text/html', 'user-agent': 'ua' },
     })
@@ -69,8 +82,11 @@ describe('external review regressions', () => {
   })
 
   it('does not treat /tenant-other as already inside the /tenant folder', async () => {
-    const folder = defineProxy('folder', () => next({ request: { 'x-tenant-folder': '/tenant' } }))
-    const handler = proxyChain({ logger: silent, hostFolderHeader: 'x-tenant-folder' }, [folder])
+    const folder = defineHandler({
+      name: 'folder',
+      handler: () => next({ request: { 'x-tenant-folder': '/tenant' } }),
+    })
+    const handler = composeChain([folder], { logger: silent, hostFolderHeader: 'x-tenant-folder' })
     const res = await handler(new NextRequest('http://localhost/tenant-other/page'), event)
     expect(res.headers.get('x-middleware-rewrite')).toContain('/tenant/tenant-other/page')
   })

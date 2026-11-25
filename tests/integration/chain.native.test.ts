@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import type { NextFetchEvent } from 'next/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { chain, defineProxy, next } from '../../src/index'
+import { chain as composeChain, defineHandler, next } from '../../src/index'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 const req = (url: string) => new NextRequest(url)
@@ -13,7 +13,7 @@ describe('chain() with native Next.js handlers', () => {
       event.waitUntil(Promise.resolve().then(() => calls.push('waitUntil')))
       return NextResponse.next()
     }
-    const handler = chain([analytics], { logger: silent })
+    const handler = composeChain([analytics], { logger: silent })
     const res = await handler(req('http://localhost/x'), { waitUntil() {} } as never)
     expect(res.status).toBe(200)
     expect(res.headers.get('x-middleware-next')).toBe('1')
@@ -24,21 +24,21 @@ describe('chain() with native Next.js handlers', () => {
       await new Promise((resolve) => setTimeout(resolve, 5))
       return undefined
     }
-    const handler = chain([slow], { logger: silent })
+    const handler = composeChain([slow], { logger: silent })
     const res = await handler(req('http://localhost/x'), {} as never)
     expect(res.headers.get('x-middleware-next')).toBe('1')
   })
 
   it('runs a scoped native handler only for matching paths', async () => {
     const auth = (_req: NextRequest) => new Response('denied', { status: 403 })
-    const handler = chain([[auth, '/dashboard/**']], { logger: silent })
+    const handler = composeChain([[auth, '/dashboard/**']], { logger: silent })
     expect((await handler(req('http://localhost/dashboard/home'), {} as never)).status).toBe(403)
     expect((await handler(req('http://localhost/about'), {} as never)).status).toBe(200)
   })
 
   it('accepts an exclude object and a RegExp exclude, Nimpl-style', async () => {
     const auth = () => new Response('denied', { status: 403 })
-    const handler = chain([[auth, { exclude: /^\/private(\/.*)?$/ }]], { logger: silent })
+    const handler = composeChain([[auth, { exclude: /^\/private(\/.*)?$/ }]], { logger: silent })
     expect((await handler(req('http://localhost/private/x'), {} as never)).status).toBe(200)
     expect((await handler(req('http://localhost/public'), {} as never)).status).toBe(403)
   })
@@ -47,7 +47,7 @@ describe('chain() with native Next.js handlers', () => {
     const header = (_req: NextRequest) => next({ headers: { 'x-frame-options': 'DENY' } })
     const redirect = (req: NextRequest) => NextResponse.redirect(new URL('/login', req.url))
     const after = () => new Response('unreachable', { status: 200 })
-    const handler = chain([header, redirect, after], { logger: silent })
+    const handler = composeChain([header, redirect, after], { logger: silent })
     const res = await handler(req('http://localhost/x'), {} as never)
     expect(res.status).toBe(307)
     expect(res.headers.get('location')).toBe('http://localhost/login')
@@ -58,27 +58,31 @@ describe('chain() with native Next.js handlers', () => {
     const broken = () => {
       throw new Error('boom')
     }
-    const handler = chain([broken], { logger: silent })
+    const handler = composeChain([broken], { logger: silent })
     expect((await handler(req('http://localhost/x'), {} as never)).status).toBe(500)
   })
 
   it('an empty chain passes every request through', async () => {
-    const handler = chain([], { logger: silent })
+    const handler = composeChain([], { logger: silent })
     expect(
       (await handler(req('http://localhost/x'), {} as never)).headers.get('x-middleware-next')
     ).toBe('1')
   })
 
-  it('keeps defineProxy context isolated per request and shares it between rules', async () => {
+  it('keeps defineHandler context isolated per request and shares it between rules', async () => {
     type Ctx = { user?: string }
-    const setUser = defineProxy<Ctx>('set-user', (r, ctx) => {
-      ctx.user = r.headers.get('x-user') ?? 'anonymous'
-      return next()
+    const setUser = defineHandler<Ctx>({
+      name: 'set-user',
+      handler: (r, _event, ctx) => {
+        ctx.user = r.headers.get('x-user') ?? 'anonymous'
+        return next()
+      },
     })
-    const reportUser = defineProxy<Ctx>('report-user', (_r, ctx) =>
-      next({ headers: { 'x-seen-user': ctx.user ?? 'none' } })
-    )
-    const handler = chain([setUser, reportUser], {
+    const reportUser = defineHandler<Ctx>({
+      name: 'report-user',
+      handler: (_r, _event, ctx) => next({ headers: { 'x-seen-user': ctx.user ?? 'none' } }),
+    })
+    const handler = composeChain([setUser, reportUser], {
       logger: silent,
       createContext: (): Ctx => ({}),
     })
@@ -91,18 +95,24 @@ describe('chain() with native Next.js handlers', () => {
     expect(b.headers.get('x-seen-user')).toBe('anonymous')
   })
 
-  it('scopes a defineProxy rule with the tuple form', async () => {
-    const deny = defineProxy('deny', () => new Response('denied', { status: 403 }))
-    const handler = chain([[deny, '/admin/**']], { logger: silent })
+  it('scopes a defineHandler rule with the tuple form', async () => {
+    const deny = defineHandler({
+      name: 'deny',
+      handler: () => new Response('denied', { status: 403 }),
+    })
+    const handler = composeChain([[deny, '/admin/**']], { logger: silent })
     expect((await handler(req('http://localhost/admin/x'), {} as never)).status).toBe(403)
     expect((await handler(req('http://localhost/home'), {} as never)).status).toBe(200)
   })
 
   it('passes the request context to a native handler as the third argument', async () => {
     type Ctx = { requestId: string }
-    const tag = defineProxy<Ctx>('tag', (_r, ctx) => {
-      ctx.requestId = 'req-1'
-      return next()
+    const tag = defineHandler<Ctx>({
+      name: 'tag',
+      handler: (_r, _event, ctx) => {
+        ctx.requestId = 'req-1'
+        return next()
+      },
     })
     const native = (
       _req: NextRequest,
@@ -112,7 +122,7 @@ describe('chain() with native Next.js handlers', () => {
       event.waitUntil(Promise.resolve())
       return next({ headers: { 'x-request-id': ctx.requestId } })
     }
-    const handler = chain([tag, native], {
+    const handler = composeChain([tag, native], {
       logger: silent,
       createContext: (): Ctx => ({ requestId: '' }),
     })
@@ -124,10 +134,11 @@ describe('chain() with native Next.js handlers', () => {
     type Ctx = { requestId: string }
     const native = (_req: NextRequest, _event: unknown, ctx: Ctx) =>
       next({ headers: { 'x-request-id': ctx.requestId } })
-    const rule = defineProxy<Ctx>('rule', (_r, ctx) =>
-      next({ headers: { 'x-seen-id': ctx.requestId } })
-    )
-    const handler = chain([rule, native], {
+    const rule = defineHandler<Ctx>({
+      name: 'rule',
+      handler: (_r, _event, ctx) => next({ headers: { 'x-seen-id': ctx.requestId } }),
+    })
+    const handler = composeChain([rule, native], {
       logger: silent,
       createContext: (req): Ctx => ({ requestId: req.headers.get('x-request-id') ?? 'generated' }),
     })

@@ -1,4 +1,4 @@
-import { chain, defineProxy, next } from '@klnap/next-proxy-chain'
+import { chain as composeChain, defineHandler, next } from '@klnap/next-proxy-chain'
 import type { NextRequest } from 'next/server'
 
 // 1. Say what the context looks like.
@@ -10,9 +10,12 @@ const createContext = (req: NextRequest): Ctx => ({
 })
 
 // 3. A rule that reads the context.
-const readSession = defineProxy<Ctx>('read-session', (req, ctx) => {
-  ctx.user = req.cookies.get('user')?.value
-  return next({ headers: { 'x-request-id': ctx.requestId } })
+const readSession = defineHandler<Ctx>({
+  name: 'read-session',
+  handler: (req, _event, ctx) => {
+    ctx.user = req.cookies.get('user')?.value
+    return next({ headers: { 'x-request-id': ctx.requestId } })
+  },
 })
 
-export default chain([readSession], { createContext })
+export default composeChain([readSession], { createContext })

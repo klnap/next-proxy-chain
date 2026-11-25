@@ -55,7 +55,7 @@ export type CompiledScope = {
   path?: RegExp
 }
 
-export interface BaseProxyRule<TFn, TContext = ProxyContext> {
+export interface BaseHandlerRule<TFn, TContext = ProxyContext> {
   run: TFn
   include?: CompiledScope[]
   exclude?: CompiledScope[]
@@ -70,20 +70,11 @@ export interface BaseProxyRule<TFn, TContext = ProxyContext> {
   }
 }
 
-export type ProxyPathFilter = {
+export type HandlerFilter = {
   include?: RouteScopeList
   exclude?: RouteScopeList
   name?: string
 }
-
-/**
- * Type-only brand carried by defineProxy() rules. It records the context type a rule expects.
- * Chain entries match on it as an object, which keeps handler parameters contextually typed.
- */
-export declare const CONTEXT_BRAND: unique symbol
-
-/** Entry type for a defineProxy() rule that expects context TContext. */
-export type ContextRuleEntry<TContext = ProxyContext> = { readonly [CONTEXT_BRAND]: TContext }
 
 /**
  * A native Next.js proxy handler: `(request, event)`. Use it in chain() without any wrapper.
@@ -104,7 +95,7 @@ export type NativeProxy<TContext = ProxyContext> = (
 /**
  * A single proxy execution function.
  */
-export type ProxyFn<TContext = ProxyContext> = (
+export type HandlerFn<TContext = ProxyContext> = (
   req: NextRequest,
   ctx: TContext,
   event: NextFetchEvent
@@ -116,13 +107,7 @@ export type ProxyFn<TContext = ProxyContext> = (
   | void
   | Promise<NextResponse | Response | NextResult | undefined | void>
 
-export type ProxyRule<TContext = ProxyContext> = BaseProxyRule<ProxyFn<TContext>, TContext>
-
-export type DefinedProxy<TContext = ProxyContext> = ProxyFn<TContext> &
-  ((filter: ProxyPathFilter) => ProxyRule<TContext>) &
-  ContextRuleEntry<TContext>
-
-export type Entry<TContext = ProxyContext> = ProxyFn<TContext> | ProxyRule<TContext>
+export type HandlerRule<TContext = ProxyContext> = BaseHandlerRule<HandlerFn<TContext>, TContext>
 
 export type MergeStrategy =
   | 'last-write-wins'
@@ -195,4 +180,4 @@ export interface ChainConfig<TContext = ProxyContext> {
   hostFolderHeader?: string
 }
 
-export type ProxyChainOptions<TContext = ProxyContext> = Partial<ChainConfig<TContext>>
+export type ChainOptions<TContext = ProxyContext> = Partial<ChainConfig<TContext>>

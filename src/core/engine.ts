@@ -2,7 +2,6 @@ import type { NextFetchEvent } from 'next/server'
 import { NextRequest, NextResponse } from 'next/server'
 
 import { isNextResult } from './actions'
-import { CONTEXT_RULE } from './constants'
 import { createProxyContext } from './context'
 import { cookieItemsFromHeaders, headersDiffer, responseHeaderItems } from './headers'
 import { applyFolderPrefix, isInsideFolder, physicalFolderPrefix } from './host-folder-prefix'
@@ -23,7 +22,6 @@ import {
   ruleLabel,
   ruleMatchReason,
   toRule,
-  withPaths,
 } from './matching'
 import {
   assertOverrideMechanismSupported,
@@ -36,16 +34,12 @@ import { assertFiniteRuleTimeoutMs, RuleTimeoutError, withRuleTimeout } from './
 import type {
   ChainConfig,
   ChainLogger,
-  BaseProxyRule,
-  DefinedProxy,
-  Entry,
+  BaseHandlerRule,
   EntryWrite,
   NextResult,
-  ProxyChainOptions,
+  ChainOptions,
   ProxyContext,
-  ProxyFn,
-  ProxyPathFilter,
-  ProxyRule,
+  HandlerRule,
   RouteScopeInput,
   RouteScopeList,
 } from './types'
@@ -107,7 +101,7 @@ function scopeNames(scopeList: RouteScopeList | undefined): string[] | undefined
 }
 
 function handlerDetails<TFn, TContext>(
-  rule: BaseProxyRule<TFn, TContext>,
+  rule: BaseHandlerRule<TFn, TContext>,
   chainTimeout: number,
   when: 'matched' | 'false' | 'not-evaluated',
   includeResult?: 'matched' | 'mismatch',
@@ -168,59 +162,10 @@ function stripRoutingOverrides(res: Response): void {
   }
 }
 
-function isPathFilter(value: unknown): value is ProxyPathFilter {
-  if (value === null || typeof value !== 'object') return false
-  if ('nextUrl' in value) return false
-  return 'include' in value || 'exclude' in value || 'name' in value
-}
-
-/**
- * Creates a reusable, scope-aware proxy rule function.
- *
- * @example
- * const authRule = defineProxy("auth", async (req, ctx) => next())
- * const scopedAuthRule = authRule({ include: path("/admin/*") })
- */
-export function defineProxy<TContext = ProxyContext>(run: ProxyFn<TContext>): DefinedProxy<TContext>
-export function defineProxy<TContext = ProxyContext>(
-  name: string,
-  run: ProxyFn<TContext>
-): DefinedProxy<TContext>
-export function defineProxy<TContext = ProxyContext>(
-  nameOrRun: string | ProxyFn<TContext>,
-  maybeRun?: ProxyFn<TContext>
-): DefinedProxy<TContext> {
-  const defaultName = typeof nameOrRun === 'string' ? nameOrRun : undefined
-  const run: ProxyFn<TContext> =
-    typeof nameOrRun === 'function' ? nameOrRun : (maybeRun as ProxyFn<TContext>)
-
-  const proxy = ((
-    reqOrFilter: NextRequest | ProxyPathFilter,
-    eventOrCtx?: NextFetchEvent | TContext,
-    maybeEvent?: NextFetchEvent
-  ) => {
-    if (isPathFilter(reqOrFilter)) {
-      return withPaths(run, {
-        ...reqOrFilter,
-        name: reqOrFilter.name ?? defaultName,
-      }) as ProxyRule<TContext>
-    }
-
-    return run(reqOrFilter, eventOrCtx as TContext, maybeEvent as NextFetchEvent)
-  }) as DefinedProxy<TContext>
-
-  Object.defineProperty(proxy, 'name', {
-    value: defaultName ?? '',
-    configurable: true,
-  })
-  Object.defineProperty(proxy, CONTEXT_RULE, { value: true })
-  return proxy
-}
-
 type ProxyHandler = (req: NextRequest, event: NextFetchEvent) => Promise<NextResponse | Response>
 
 function resolveConfig<TContext>(
-  overrides: ProxyChainOptions<TContext>,
+  overrides: ChainOptions<TContext>,
   fallbackCreateContext: ChainConfig<TContext>['createContext']
 ): ChainConfig<TContext> {
   const { logger, debug, createContext, ...rest } = overrides
@@ -244,38 +189,11 @@ function resolveConfig<TContext>(
   return config
 }
 
-/**
- * Composes independent proxy rules into a single pipeline for Next.js 15 (middleware.ts) and Next.js 16 (proxy.ts).
- *
- * Custom `TContext` requires `createContext`. Without it, context is `ProxyContext` (`Map`).
- *
- * @example
- * export default proxyChain({ debug: true }, [
- *   requestIdRule,
- *   authRule({ include: path("/dashboard/*") }),
- *   i18nRule,
- * ])
- */
-/** @deprecated Use chain(). Plain functions here receive (request, context, event). */
-export function proxyChain(entries: Entry<ProxyContext>[]): ProxyHandler
-export function proxyChain(
-  options: ProxyChainOptions<ProxyContext>,
-  entries: Entry<ProxyContext>[]
-): ProxyHandler
-export function proxyChain<TContext>(
-  options: ProxyChainOptions<TContext> & {
-    createContext: (req: NextRequest, event: NextFetchEvent) => TContext
-  },
-  entries: Entry<TContext>[]
-): ProxyHandler
-export function proxyChain<TContext>(
-  optionsOrEntries: ProxyChainOptions<TContext> | Entry<TContext>[],
-  maybeEntries?: Entry<TContext>[]
+/** Internal executor for the public chain() composition helper. */
+export function executeChain<TContext>(
+  options: ChainOptions<TContext>,
+  entries: HandlerRule<TContext>[]
 ): ProxyHandler {
-  const options: ProxyChainOptions<TContext> = Array.isArray(optionsOrEntries)
-    ? {}
-    : optionsOrEntries
-  const entries = (Array.isArray(optionsOrEntries) ? optionsOrEntries : maybeEntries) ?? []
   const fallbackCreateContext =
     createProxyContext as unknown as ChainConfig<TContext>['createContext']
   const config = resolveConfig(options, fallbackCreateContext)

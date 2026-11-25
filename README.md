@@ -69,26 +69,32 @@ Segments are compared whole. `/tenant` does not match `/tenant-other`. A pattern
 
 ## Context: data shared along the chain
 
-The context is a `Map` that exists for one request. A rule stores a value with `ctx.set`, and a later rule reads it with `ctx.get`:
+The context is a `Map` that exists for one request. A handler stores a value with `ctx.set`, and a later handler reads it with `ctx.get`:
 
 ```ts
-import { chain, defineProxy, next } from '@klnap/next-proxy-chain'
+import { chain, defineHandler, next } from '@klnap/next-proxy-chain'
 import { NextResponse } from 'next/server'
 
 type Session = { user: string }
 
 // Sets the value.
-const readSession = defineProxy('read-session', (req, ctx) => {
-  const user = req.cookies.get('user')?.value
-  if (user) ctx.set('session', { user })
-  return next()
+const readSession = defineHandler({
+  name: 'read-session',
+  handler: (request, _event, context) => {
+    const user = request.cookies.get('user')?.value
+    if (user) context.set('session', { user })
+    return next()
+  },
 })
 
 // Reads the value.
-const requireUser = defineProxy('require-user', (req, ctx) => {
-  const session = ctx.get('session') as Session | undefined
-  if (!session) return NextResponse.redirect(new URL('/login', req.url))
-  return next()
+const requireUser = defineHandler({
+  name: 'require-user',
+  handler: (request, _event, context) => {
+    const session = context.get('session') as Session | undefined
+    if (!session) return NextResponse.redirect(new URL('/login', request.url))
+    return next()
+  },
 })
 
 export default chain([readSession, [requireUser, '/dashboard/**']])
@@ -113,7 +119,7 @@ export default chain([requestLog, authProxy], {
 })
 ```
 
-Rules declared with `defineProxy<Ctx>` need a matching `createContext`. TypeScript reports an error otherwise.
+Handlers declared with `defineHandler<Ctx>` need a matching `createContext`. TypeScript reports an error otherwise.
 
 ## Continuing and stopping
 
@@ -132,11 +138,11 @@ Headers and cookies that earlier handlers set are kept on the response that stop
 
 ## Options
 
-`chain(entries, options)` accepts the same options as `proxyChain`:
+`chain(entries, options)` accepts these options:
 
 | Option                                       | Purpose                                                                          |
 | :------------------------------------------- | :------------------------------------------------------------------------------- |
-| `createContext`                              | Creates the context for each request. Required for typed rules.                  |
+| `createContext`                              | Creates the context for each request. Required for typed handlers.              |
 | `onError`                                    | Returns a `Response` to stop with, `next()` to continue, or nothing for a `500`. |
 | `ruleTimeoutMs`                              | Time limit per handler. `0` (default) disables it.                               |
 | `headerMergeStrategy`, `cookieMergeStrategy` | How conflicting response headers and cookies are resolved.                       |
@@ -285,8 +291,6 @@ Formatting a collected trace alone took 0.59 µs for compact, 3.19 µs for detai
 - Handlers can be async.
 - Handlers returned by other packages work unchanged, if they follow the native signature.
 
-`proxyChain()` is a deprecated alias that is still exported and unchanged. Its plain functions receive `(request, context, event)`. Use `chain()` in new code.
-
 ## Documentation
 
 - [Concepts](https://github.com/klnap/next-proxy-chain/blob/main/docs/concepts.md): execution order, continuation, scoping, headers, cookies, errors.
@@ -298,11 +302,15 @@ Runnable examples are in [`examples/`](https://github.com/klnap/next-proxy-chain
 
 ## Migration
 
-No change is required. `proxyChain()` and `defineProxy()` keep working. To move to `chain()`:
+Version 2 removes `proxyChain()`, `defineProxy()`, context-first handler signatures, and manually constructed rule objects. Upgrade with:
 
-1. Replace `proxyChain(entries)` with `chain(entries)`.
-2. Plain functions that used the old `(request, context, event)` signature: rewrite them with `defineProxy()`, which keeps that signature.
-3. Replace `path()` and `host()` helpers with strings, arrays, or objects where you like. They still work.
+1. Install `@klnap/next-proxy-chain@^2.0.0`.
+2. Change `proxyChain(options, entries)` to `chain(entries, options)`.
+3. Replace `defineProxy(name, (request, context, event) => ...)` with `defineHandler({ name, handler: (request, event, context) => ... })`.
+4. Replace callable scopes such as `handler({ include })` with `[handler, { include }]`, or move the scope into `defineHandler({ rules })`.
+5. Replace manually constructed `{ run, include, exclude, name }` entries with native functions or `defineHandler()` results.
+
+Version 1.2 remains backward compatible. Keep using it if you cannot migrate yet.
 
 ## Compatibility
 

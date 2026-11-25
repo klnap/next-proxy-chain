@@ -1,5 +1,5 @@
 // proxy.ts (Next.js 16) or middleware.ts (Next.js 15)
-import { chain, defineProxy, next } from '@klnap/next-proxy-chain'
+import { chain as composeChain, defineHandler, next } from '@klnap/next-proxy-chain'
 import { type NextRequest, NextResponse } from 'next/server'
 
 // A native Next.js handler: (request, event). No wrapper needed.
@@ -16,18 +16,24 @@ function analytics(req: NextRequest, event: { waitUntil(p: Promise<unknown>): vo
   return NextResponse.next()
 }
 
-// A rule that needs request state uses defineProxy() and a typed context.
+// A rule that needs request state uses defineHandler() and a typed context.
 type Session = { user?: string }
-const readSession = defineProxy<Session>('read-session', (req, session) => {
-  session.user = req.cookies.get('user')?.value
-  return next()
+const readSession = defineHandler<Session>({
+  name: 'read-session',
+  handler: (req, _event, session) => {
+    session.user = req.cookies.get('user')?.value
+    return next()
+  },
 })
-const requireUser = defineProxy<Session>('require-user', (req, session) => {
-  if (!session.user) return NextResponse.redirect(new URL('/login', req.url))
-  return next()
+const requireUser = defineHandler<Session>({
+  name: 'require-user',
+  handler: (req, _event, session) => {
+    if (!session.user) return NextResponse.redirect(new URL('/login', req.url))
+    return next()
+  },
 })
 
-export default chain(
+export default composeChain(
   [
     localeRedirect,
     analytics,

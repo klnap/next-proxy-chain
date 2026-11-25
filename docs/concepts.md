@@ -4,7 +4,7 @@ This page describes how a request moves through a chain. Read it before writing 
 
 ## One request, one pass
 
-`proxyChain` returns a single function. Next.js calls it once per request. It runs the rules in array order, one at a time:
+`chain` returns a single function. Next.js calls it once per request. It runs the handlers in array order, one at a time:
 
 1. Check whether the rule's `include` and `exclude` scopes match the request. If not, skip the rule.
 2. Run the rule with the current request and the request's context.
@@ -15,7 +15,7 @@ If every rule continues, the chain ends with `NextResponse.next()`, or with a re
 ## Two kinds of rules
 
 - A **native handler** is a plain function `(request, event)`. `chain()` passes the native arguments unchanged, so a handler written for `proxy.ts` works as it is.
-- A **context rule** is created with `defineProxy()`. It receives `(request, context, event)`. The context is created for each request by `createContext`.
+- A **configured handler** is created with `defineHandler()`. It receives `(request, event, context)`. The context is created for each request by `createContext`.
 
 Both kinds run in array order, follow the same continuation rules, and can be scoped with a tuple.
 
@@ -36,7 +36,7 @@ Stopping is immediate. Rules after a stopping rule never run, so their headers, 
 A rule can take an `include` and an `exclude`:
 
 ```ts
-authRule({ include: path('/admin/**'), exclude: path('/admin/login') })
+[authHandler, { include: path('/admin/**'), exclude: path('/admin/login') }]
 ```
 
 - No `include`: the rule runs for every request.
@@ -75,9 +75,12 @@ Headers from rules that continued before a stopping rule are still merged into i
 Each request gets its own context object, created before the first rule runs. Rules can read and write it. Nothing in it survives the request.
 
 ```ts
-const setUser = defineProxy('set-user', (req, ctx) => {
-  ctx.set('userId', 'usr_123')
-  return next()
+const setUser = defineHandler({
+  name: 'set-user',
+  handler: (_request, _event, context) => {
+    context.set('userId', 'usr_123')
+    return next()
+  },
 })
 ```
 

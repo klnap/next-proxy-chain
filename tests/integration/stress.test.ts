@@ -1,21 +1,24 @@
 import { describe, expect, it } from 'bun:test'
 import { NextRequest, NextResponse } from 'next/server'
-import { defineProxy, next, proxyChain } from '../../src/index'
+import { chain as composeChain, defineHandler, next } from '../../src/index'
 
 describe('Universal Multi-Host & Rewrite Pipeline Stress Test', () => {
   it('executes multi-host routing cleanly without i18n', async () => {
-    const multiHostRule = defineProxy('multiHost', (req) => {
-      const host = req.headers.get('host')
-      if (host === 'api.localhost:3000') {
-        return NextResponse.rewrite(new URL(`/api-host${req.nextUrl.pathname}`, req.url))
-      }
-      if (host === 'admin.localhost:3000') {
-        return NextResponse.rewrite(new URL(`/admin-panel${req.nextUrl.pathname}`, req.url))
-      }
-      return next()
+    const multiHostRule = defineHandler({
+      name: 'multiHost',
+      handler: (req) => {
+        const host = req.headers.get('host')
+        if (host === 'api.localhost:3000') {
+          return NextResponse.rewrite(new URL(`/api-host${req.nextUrl.pathname}`, req.url))
+        }
+        if (host === 'admin.localhost:3000') {
+          return NextResponse.rewrite(new URL(`/admin-panel${req.nextUrl.pathname}`, req.url))
+        }
+        return next()
+      },
     })
 
-    const chain = proxyChain({}, [multiHostRule])
+    const chain = composeChain([multiHostRule], {})
 
     // Request 1: api.localhost
     const reqApi = new NextRequest('http://api.localhost:3000/v1/users', {
@@ -45,25 +48,34 @@ describe('Universal Multi-Host & Rewrite Pipeline Stress Test', () => {
   })
 
   it('composes multiple sequential rules without dropping rewrite targets or headers', async () => {
-    const rule1 = defineProxy('rule1', (req) => {
-      return NextResponse.rewrite(new URL(`/shop${req.nextUrl.pathname}`, req.url))
+    const rule1 = defineHandler({
+      name: 'rule1',
+      handler: (req) => {
+        return NextResponse.rewrite(new URL(`/shop${req.nextUrl.pathname}`, req.url))
+      },
     })
 
-    const rule2 = defineProxy('rule2', (req) => {
-      expect(req.nextUrl.pathname).toBe('/shop/pl/produkty')
-      const translated = req.nextUrl.pathname.replace('/produkty', '/products')
-      return NextResponse.rewrite(new URL(translated, req.url))
+    const rule2 = defineHandler({
+      name: 'rule2',
+      handler: (req) => {
+        expect(req.nextUrl.pathname).toBe('/shop/pl/produkty')
+        const translated = req.nextUrl.pathname.replace('/produkty', '/products')
+        return NextResponse.rewrite(new URL(translated, req.url))
+      },
     })
 
-    const rule3 = defineProxy('rule3', (req) => {
-      expect(req.nextUrl.pathname).toBe('/shop/pl/products')
-      return next({
-        request: { 'x-custom-rule': 'active' },
-        headers: { 'x-audit-passed': 'true' },
-      })
+    const rule3 = defineHandler({
+      name: 'rule3',
+      handler: (req) => {
+        expect(req.nextUrl.pathname).toBe('/shop/pl/products')
+        return next({
+          request: { 'x-custom-rule': 'active' },
+          headers: { 'x-audit-passed': 'true' },
+        })
+      },
     })
 
-    const chain = proxyChain({}, [rule1, rule2, rule3])
+    const chain = composeChain([rule1, rule2, rule3], {})
     const req = new NextRequest('http://shop.localhost:3000/pl/produkty')
 
     const res = await chain(req, {} as any)
@@ -74,15 +86,18 @@ describe('Universal Multi-Host & Rewrite Pipeline Stress Test', () => {
   })
 
   it('handles malformed host headers and port variations', async () => {
-    const hostIsolation = defineProxy('isolation', (req) => {
-      const host = req.headers.get('host')?.replace(/:\d+$/, '')
-      if (host === 'shop.localhost') {
-        return NextResponse.rewrite(new URL(`/shop${req.nextUrl.pathname}`, req.url))
-      }
-      return next()
+    const hostIsolation = defineHandler({
+      name: 'isolation',
+      handler: (req) => {
+        const host = req.headers.get('host')?.replace(/:\d+$/, '')
+        if (host === 'shop.localhost') {
+          return NextResponse.rewrite(new URL(`/shop${req.nextUrl.pathname}`, req.url))
+        }
+        return next()
+      },
     })
 
-    const chain = proxyChain({}, [hostIsolation])
+    const chain = composeChain([hostIsolation], {})
 
     // Host with explicit port
     const reqPort = new NextRequest('http://shop.localhost:8080/cart', {

@@ -1,7 +1,7 @@
 // Run: bun run bench/chain.bench.ts
-// Measures per-request overhead of chain() versus proxyChain() on the same native handlers.
+// Measures chain() request and initialization overhead for native handlers.
 import { NextRequest, NextResponse } from 'next/server'
-import { chain, proxyChain } from '../src/index'
+import { chain } from '../src/index'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 const native = [
@@ -25,19 +25,11 @@ const req = () => new NextRequest('http://localhost/dashboard/home')
 const iterations = 50_000
 
 const viaChain = chain(native, { logger: silent })
-const viaProxyChain = proxyChain({ logger: silent }, native as never)
 
 await time(
   'chain (3 native)',
   async () => {
     await viaChain(req(), event)
-  },
-  iterations
-)
-await time(
-  'proxyChain (3 native)',
-  async () => {
-    await viaProxyChain(req(), event)
   },
   iterations
 )

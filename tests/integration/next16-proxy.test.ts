@@ -1,41 +1,47 @@
 import { describe, expect, it } from 'bun:test'
 import type { NextFetchEvent } from 'next/server'
 import { NextRequest } from 'next/server'
-import { defineProxy, host, next, proxyChain } from '../../src'
+import { chain as composeChain, defineHandler, host, next } from '../../src'
 
 const mockEvent = {} as NextFetchEvent
 
 describe('Next.js 16 Integration: proxy.ts cycle', () => {
   it('executes multi-tenant proxy routing seamlessly in Next.js 16 conventions', async () => {
-    const multiHostProxy = defineProxy('multiHost', (req, ctx) => {
-      const hostname = req.headers.get('host')?.split(':')[0]
-      if (hostname === 'admin.platform.com') {
-        ctx.set('tenant', 'admin')
-        return next({
-          request: { 'x-tenant-id': 'admin-portal' },
-          headers: { 'x-routed-by': 'next-proxy-chain' },
-        })
-      }
-      if (hostname === 'store.platform.com') {
-        ctx.set('tenant', 'store')
-        return next({
-          request: { 'x-tenant-id': 'ecommerce-store' },
-          headers: { 'x-routed-by': 'next-proxy-chain' },
-        })
-      }
-      return next()
+    const multiHostProxy = defineHandler({
+      name: 'multiHost',
+      handler: (req, _event, ctx) => {
+        const hostname = req.headers.get('host')?.split(':')[0]
+        if (hostname === 'admin.platform.com') {
+          ctx.set('tenant', 'admin')
+          return next({
+            request: { 'x-tenant-id': 'admin-portal' },
+            headers: { 'x-routed-by': 'next-proxy-chain' },
+          })
+        }
+        if (hostname === 'store.platform.com') {
+          ctx.set('tenant', 'store')
+          return next({
+            request: { 'x-tenant-id': 'ecommerce-store' },
+            headers: { 'x-routed-by': 'next-proxy-chain' },
+          })
+        }
+        return next()
+      },
     })
 
-    const rateLimitProxy = defineProxy('rateLimit', (_req, ctx) => {
-      const tenant = ctx.get('tenant')
-      return next({
-        headers: { 'x-rate-limit-tier': tenant === 'admin' ? 'unlimited' : 'standard' },
-      })
+    const rateLimitProxy = defineHandler({
+      name: 'rateLimit',
+      handler: (_req, _event, ctx) => {
+        const tenant = ctx.get('tenant')
+        return next({
+          headers: { 'x-rate-limit-tier': tenant === 'admin' ? 'unlimited' : 'standard' },
+        })
+      },
     })
 
-    const proxy = proxyChain([
+    const proxy = composeChain([
       multiHostProxy,
-      rateLimitProxy({ include: { host: host(['admin.platform.com', 'store.platform.com']) } }),
+      [rateLimitProxy, { include: { host: host(['admin.platform.com', 'store.platform.com']) } }],
     ])
 
     // 1. Admin host request

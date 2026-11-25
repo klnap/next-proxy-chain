@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import type { NextFetchEvent } from 'next/server'
 import { NextRequest } from 'next/server'
 import { RuleTimeoutError, withRuleTimeout } from '../../src/core/timeout'
-import { defineProxy, proxyChain } from '../../src/index'
+import { chain as composeChain, defineHandler } from '../../src/index'
 
 describe('Timeout Enforcement', () => {
   it('resolves quickly when execution is within budget', async () => {
@@ -30,7 +30,7 @@ describe('Timeout Enforcement', () => {
   })
 })
 
-describe('Timeout through proxyChain', () => {
+describe('Timeout through chain', () => {
   const fakeEvent = {} as NextFetchEvent
   const silentLogger = {
     debug: () => {},
@@ -40,27 +40,33 @@ describe('Timeout through proxyChain', () => {
   }
 
   it('throws RangeError synchronously when ruleTimeoutMs is non-finite', () => {
-    expect(() => proxyChain({ ruleTimeoutMs: Number.NaN }, [])).toThrow(RangeError)
-    expect(() => proxyChain({ ruleTimeoutMs: Number.POSITIVE_INFINITY }, [])).toThrow(RangeError)
-    expect(() => proxyChain({ ruleTimeoutMs: Number.NEGATIVE_INFINITY }, [])).toThrow(RangeError)
+    expect(() => composeChain([], { ruleTimeoutMs: Number.NaN })).toThrow(RangeError)
+    expect(() => composeChain([], { ruleTimeoutMs: Number.POSITIVE_INFINITY })).toThrow(RangeError)
+    expect(() => composeChain([], { ruleTimeoutMs: Number.NEGATIVE_INFINITY })).toThrow(RangeError)
   })
 
   it('returns 500 when a rule exceeds ruleTimeoutMs', async () => {
-    const slow = defineProxy('slow', async () => {
-      await new Promise((resolve) => setTimeout(resolve, 80))
-      return undefined
+    const slow = defineHandler({
+      name: 'slow',
+      handler: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 80))
+        return undefined
+      },
     })
-    const chain = proxyChain({ ruleTimeoutMs: 15, logger: silentLogger }, [slow])
+    const chain = composeChain([slow], { ruleTimeoutMs: 15, logger: silentLogger })
     const res = await chain(new NextRequest('http://localhost:3000/'), fakeEvent)
     expect(res.status).toBe(500)
   })
 
   it('does not surface an unhandled rejection after timeout', async () => {
-    const late = defineProxy('late', async () => {
-      await new Promise((resolve) => setTimeout(resolve, 60))
-      throw new Error('late rejection')
+    const late = defineHandler({
+      name: 'late',
+      handler: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 60))
+        throw new Error('late rejection')
+      },
     })
-    const chain = proxyChain({ ruleTimeoutMs: 10, logger: silentLogger }, [late])
+    const chain = composeChain([late], { ruleTimeoutMs: 10, logger: silentLogger })
     const res = await chain(new NextRequest('http://localhost:3000/'), fakeEvent)
     expect(res.status).toBe(500)
     await new Promise((resolve) => setTimeout(resolve, 80))

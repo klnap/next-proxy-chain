@@ -13,10 +13,13 @@
 The library runs your auth check. It does not perform one. A cookie being present is not a session. Verify the session or token on the server, with the same code that protects your data:
 
 ```ts
-const requireSession = defineProxy('require-session', async (req) => {
-  const session = await verifySession(req.cookies.get('session')?.value)
-  if (!session) return NextResponse.redirect(new URL('/login', req.url))
-  return next()
+const requireSession = defineHandler({
+  name: 'require-session',
+  handler: async (request) => {
+    const session = await verifySession(request.cookies.get('session')?.value)
+    if (!session) return NextResponse.redirect(new URL('/login', request.url))
+    return next()
+  },
 })
 ```
 

@@ -6,7 +6,7 @@ import {
   resetOverrideMechanismProbeForTests,
   setOverrideMechanismProbeForTests,
 } from '../../src/core/pipeline'
-import { proxyChain } from '../../src/index'
+import { chain as composeChain } from '../../src/index'
 
 afterEach(() => {
   resetOverrideMechanismProbeForTests()
@@ -45,14 +45,14 @@ describe('assertOverrideMechanismSupported strict cache', () => {
   })
 })
 
-describe('proxyChain strictOverrideCheck cache', () => {
+describe('chain strictOverrideCheck cache', () => {
   const fakeEvent = {} as NextFetchEvent
 
   it('throws when strictOverrideCheck=true follows a warmed unsupported cache', () => {
     setOverrideMechanismProbeForTests(() => false)
 
-    expect(() => proxyChain({ strictOverrideCheck: false }, [])).not.toThrow()
-    expect(() => proxyChain({ strictOverrideCheck: true }, [])).toThrow(
+    expect(() => composeChain([], { strictOverrideCheck: false })).not.toThrow()
+    expect(() => composeChain([], { strictOverrideCheck: true })).toThrow(
       /does not support x-middleware-next header overrides/
     )
   })
@@ -60,10 +60,10 @@ describe('proxyChain strictOverrideCheck cache', () => {
   it('does not throw when strictOverrideCheck=false reuses cached unsupported capability', () => {
     setOverrideMechanismProbeForTests(() => false)
 
-    expect(() => proxyChain({ strictOverrideCheck: true }, [])).toThrow()
-    expect(() => proxyChain({ strictOverrideCheck: false }, [])).not.toThrow()
+    expect(() => composeChain([], { strictOverrideCheck: true })).toThrow()
+    expect(() => composeChain([], { strictOverrideCheck: false })).not.toThrow()
 
-    const chain = proxyChain({ strictOverrideCheck: false }, [])
+    const chain = composeChain([], { strictOverrideCheck: false })
     return chain(new NextRequest('http://localhost:3000/'), fakeEvent).then((res) => {
       expect(res.status).toBe(200)
     })

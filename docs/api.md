@@ -6,12 +6,10 @@ Everything is exported from `@klnap/next-proxy-chain`.
 import {
   chain,
   defineHandler,
-  defineProxy,
   host,
   isNextResult,
   next,
   path,
-  proxyChain,
   createProxyContext,
   RuleTimeoutError,
 } from '@klnap/next-proxy-chain'
@@ -19,7 +17,7 @@ import {
 
 ## `chain`
 
-Composes native Next.js proxy handlers, rules, and scoped tuples into one handler. This is the recommended entry point.
+Composes native Next.js proxy handlers, defineHandler() results, and scoped tuples into one handler.
 
 ```ts
 chain(entries)
@@ -32,9 +30,8 @@ chain<TContext>(entries, { createContext, ...options })
 | Entry                                           | Receives                                                        | Notes                                                                                                                                  |
 | :---------------------------------------------- | :-------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------- |
 | A plain function `(request, event, context?)`   | `request`, `event`, and `context` as an optional third argument | The native Next.js signature. Next.js passes only two arguments; `chain()` adds the request context third.                             |
-| A `defineProxy()` rule                          | `request`, `context`, `event`                                   | Use for typed per-request state. Needs `createContext` when it declares a context type.                                                |
+| A `defineHandler()` result                      | `request`, `event`, and `context`                               | Use for named handlers, local rules, typed context, and per-handler settings.                                                         |
 | A tuple `[handler, scope]`                      | As above, only when the scope matches                           | `scope` is a path string, an array of paths, a RegExp, or an object `{ include?, exclude? }`. Include objects can also contain `host`. |
-| A rule object `{ run, include, exclude, name }` | `request`, `context`, `event`                                   | The same as `proxyChain`.                                                                                                              |
 
 `chain()` runs entries in array order. It returns a function that Next.js calls as `default` export of `proxy.ts` or `middleware.ts`.
 
@@ -42,7 +39,7 @@ chain<TContext>(entries, { createContext, ...options })
 export default chain([intlProxy, [authProxy, '/dashboard/**'], securityProxy])
 ```
 
-A plain function never receives the context, so it is always safe to pass a native handler. `proxyChain()` is different: its plain functions receive `(request, context, event)`.
+A plain handler keeps the native Next.js signature. The optional third context argument is supplied only by `chain()`.
 
 ## `defineHandler`
 
@@ -65,50 +62,6 @@ const authHandler = defineHandler<Context>({
 The handler receives `(request, event, context)`. `rules.when` runs after include/exclude matching and before the handler. It uses the handler timeout or, if unset, the chain's `ruleTimeoutMs`.
 
 The optional handler-level `onError` replaces the chain-level `onError` for that handler. If it returns `undefined`, `null`, or throws, the request fails closed; the chain-level handler is not tried afterward. Verbose diagnostics identify which policy handled the error.
-
-## `proxyChain`
-
-Builds the function that Next.js calls for each request.
-
-```ts
-proxyChain(entries)
-proxyChain(options, entries)
-proxyChain<TContext>({ createContext, ...options }, entries)
-```
-
-- `entries`: an array of rules. Each entry is either a rule created with `defineProxy`, a plain function, or a `{ run, include, exclude, name }` object. In the object form, `include` and `exclude` take scopes built with `path()` or `host()`. Other values throw at startup, so a bare RegExp cannot silently match every request.
-- `options`: see [Options](#options).
-
-Export the result as the default export of `proxy.ts` (Next.js 16) or `middleware.ts` (Next.js 15).
-
-```ts
-export default proxyChain([...rules])
-```
-
-## `defineProxy`
-
-Creates a rule that receives the request context. Plain functions do not need it; use it only for typed per-request state or a named rule.
-
-Creates a reusable rule. Calling the result with a scope returns a scoped rule.
-
-```ts
-const rule = defineProxy('name', (req, ctx, event) => next())
-const scoped = rule({ include: path('/admin/**'), exclude: path('/admin/login') })
-```
-
-- `name` is optional. It appears in logs and in error messages. Without it, the function's name is used.
-- Pass a generic to type the context: `defineProxy<MyContext>(...)`.
-- Calling a rule with a request instead of a scope runs it directly. You do not normally do this.
-
-### Scope
-
-`include` and `exclude` each accept:
-
-- a path pattern (`string` or `RegExp`),
-- a host matcher object `{ host, path? }` or `{ path, host? }`,
-- or an array of these.
-
-`exclude` is checked first. A rule runs when it matches at least one `include` (or has no `include`) and matches no `exclude`. Declaring the same scope in both `include` and `exclude` throws at startup.
 
 ## `next`
 
@@ -284,13 +237,10 @@ Any logger with these four methods works, including pino and winston.
 
 | Type                                         | Meaning                                                                                   |
 | :------------------------------------------- | :---------------------------------------------------------------------------------------- |
-| `ProxyFn<TContext>`                          | The function a rule runs. Returns a response, `next()`, `undefined`, or a promise of one. |
-| `ProxyRule<TContext>`                        | A rule object with `run`, `include`, `exclude`, `name`.                                   |
-| `DefinedProxy<TContext>`                     | The return type of `defineProxy`: callable as a rule or with a scope.                     |
-| `Entry<TContext>`                            | Anything you can put in the rules array.                                                  |
+| `ChainOptions<TContext>`                     | Options accepted by `chain()`.                                                            |
+| `ChainEntry<TContext>`                       | A native handler, defined handler, or scoped tuple.                                       |
+| `DefinedHandler<TContext>`                   | The return type of `defineHandler()`.                                                      |
 | `ProxyContext`                               | `Map<string, unknown>`.                                                                   |
-| `ProxyChainOptions<TContext>`                | The options object.                                                                       |
-| `ProxyPathFilter`                            | `{ include?, exclude?, name? }`, the argument to a scoped rule.                           |
 | `PathMatcher`                                | `string \| RegExp`.                                                                       |
 | `HostMatcher`                                | `string \| RegExp \| (string \| RegExp)[]`.                                               |
 | `NextOptions`                                | The argument to `next()`.                                                                 |

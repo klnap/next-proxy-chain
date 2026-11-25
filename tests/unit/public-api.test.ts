@@ -8,12 +8,12 @@ describe('public API surface', () => {
       'chain',
       'createProxyContext',
       'defineHandler',
-      'defineProxy',
       'host',
       'isNextResult',
       'next',
       'path',
-      'proxyChain',
     ])
+    expect(api).not.toHaveProperty('defineProxy')
+    expect(api).not.toHaveProperty('proxyChain')
   })
 })

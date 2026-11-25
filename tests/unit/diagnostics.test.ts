@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 import { NextRequest, NextResponse } from 'next/server'
-import { chain, defineHandler, next } from '../../src/index'
 import { formatTrace, shouldUseColor, supportsUnicode } from '../../src/core/diagnostics/formatter'
-import { safeDiagnosticText, safeDestination } from '../../src/core/diagnostics/sanitize'
+import { safeDestination, safeDiagnosticText } from '../../src/core/diagnostics/sanitize'
 import type { ChainTrace } from '../../src/core/diagnostics/types'
+import { chain as composeChain, defineHandler, next } from '../../src/index'
 
 describe('diagnostic formatting', () => {
   it('formats compact traces as one readable line', () => {
@@ -146,7 +146,7 @@ describe('chain structured diagnostics', () => {
   it('traces execution, rule skips, redirects, and handlers not reached', async () => {
     let trace: ChainTrace | undefined
     const redirect = () => NextResponse.redirect('https://example.com/login?token=secret')
-    const proxy = chain(
+    const proxy = composeChain(
       [
         () => next(),
         defineHandler({
@@ -187,7 +187,7 @@ describe('chain structured diagnostics', () => {
 
   it('distinguishes implicit continuation from NextResponse.next()', async () => {
     let trace: ChainTrace | undefined
-    const proxy = chain([() => undefined, () => NextResponse.next()], {
+    const proxy = composeChain([() => undefined, () => NextResponse.next()], {
       onTrace: (value) => {
         trace = value
       },
@@ -202,7 +202,7 @@ describe('chain structured diagnostics', () => {
 
   it('emits built-in details for a handler override when global debug is disabled', async () => {
     const messages: string[] = []
-    const proxy = chain(
+    const proxy = composeChain(
       [
         defineHandler({
           name: 'local-debug',
@@ -231,7 +231,7 @@ describe('chain structured diagnostics', () => {
 
   it('keeps compact request counts when a handler suppresses its detail', async () => {
     const messages: string[] = []
-    const proxy = chain(
+    const proxy = composeChain(
       [
         defineHandler({
           name: 'hidden',
@@ -259,7 +259,7 @@ describe('chain structured diagnostics', () => {
 
   it('normalizes debug true to detailed output', async () => {
     const messages: string[] = []
-    const proxy = chain([() => NextResponse.next()], {
+    const proxy = composeChain([() => NextResponse.next()], {
       debug: true,
       logger: {
         debug() {},
@@ -279,7 +279,7 @@ describe('chain structured diagnostics', () => {
   it('honors explicit false handler debugging and reports when-false skips', async () => {
     const messages: string[] = []
     let trace: ChainTrace | undefined
-    const proxy = chain(
+    const proxy = composeChain(
       [
         defineHandler({
           name: 'hidden',
@@ -321,7 +321,7 @@ describe('chain structured diagnostics', () => {
   })
 
   it('ignores synchronous logger failures and rejected async trace callbacks', async () => {
-    const proxy = chain([() => NextResponse.next()], {
+    const proxy = composeChain([() => NextResponse.next()], {
       debug: 'compact',
       logger: {
         debug() {},
@@ -342,7 +342,7 @@ describe('chain structured diagnostics', () => {
 
   it('records recovered failures and the response the chain ultimately returns', async () => {
     let trace: ChainTrace | undefined
-    const proxy = chain(
+    const proxy = composeChain(
       [
         defineHandler({
           name: 'analytics',
@@ -375,7 +375,7 @@ describe('chain structured diagnostics', () => {
   it('uses a handler error policy before the chain policy', async () => {
     let trace: ChainTrace | undefined
     let globalRecoveryCalled = false
-    const proxy = chain(
+    const proxy = composeChain(
       [
         defineHandler({
           name: 'analytics',
@@ -413,7 +413,7 @@ describe('chain structured diagnostics', () => {
 
   it('includes asynchronous error recovery in handler duration', async () => {
     let trace: ChainTrace | undefined
-    const proxy = chain(
+    const proxy = composeChain(
       [
         () => {
           throw new Error('failure')
@@ -440,7 +440,7 @@ describe('chain structured diagnostics', () => {
 
   it('reports timeout without claiming the handler was cancelled', async () => {
     let trace: ChainTrace | undefined
-    const proxy = chain(
+    const proxy = composeChain(
       [
         defineHandler({
           name: 'session',
@@ -465,7 +465,7 @@ describe('chain structured diagnostics', () => {
 
   it('keeps concurrent request traces isolated and can omit paths', async () => {
     const traces: ChainTrace[] = []
-    const proxy = chain(
+    const proxy = composeChain(
       [
         (request) =>
           request.nextUrl.pathname === '/one' ? new Response(null, { status: 403 }) : undefined,
@@ -491,7 +491,7 @@ describe('chain structured diagnostics', () => {
 
   it('reports the actual redirect when a pending rewrite is superseded', async () => {
     let trace: ChainTrace | undefined
-    const proxy = chain(
+    const proxy = composeChain(
       [
         () => NextResponse.rewrite('https://example.com/rewritten'),
         () => NextResponse.redirect('https://example.com/login'),

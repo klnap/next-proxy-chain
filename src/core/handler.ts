@@ -1,14 +1,19 @@
 import type { NextFetchEvent, NextRequest } from 'next/server'
+import { DEFINED_HANDLER } from './constants'
 import type { HandlerDebugOptions } from './diagnostics/types'
 import { compileScopes } from './matching'
-import type { ProxyContext, ProxyRule } from './types'
+import type { ProxyContext, HandlerRule } from './types'
+
+export type DefinedHandler<TContext = ProxyContext> = HandlerRule<TContext> & {
+  readonly [DEFINED_HANDLER]: true
+}
 
 /**
  * Defines a native-signature handler with optional chain rules and local settings.
  */
 export function defineHandler<TContext = ProxyContext>(
   options: HandlerDebugOptions<TContext>
-): ProxyRule<TContext> {
+): DefinedHandler<TContext> {
   const include = compileScopes(options.rules?.include)
   const exclude = compileScopes(options.rules?.exclude)
   const rule = {
@@ -26,5 +31,5 @@ export function defineHandler<TContext = ProxyContext>(
       exclude: options.rules?.exclude,
     },
   }
-  return rule as ProxyRule<TContext>
+  return { ...rule, [DEFINED_HANDLER]: true } as DefinedHandler<TContext>
 }

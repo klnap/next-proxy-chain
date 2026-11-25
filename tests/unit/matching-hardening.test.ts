@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { NextRequest } from 'next/server'
 import { canonicalPathname, host, normalizeHost } from '../../src/core/matching'
-import { defineProxy, next, path, proxyChain } from '../../src/index'
+import { chain as composeChain, defineHandler, next, path } from '../../src/index'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -30,8 +30,11 @@ describe('scope matching hardening', () => {
   })
 
   it('applies an include-scoped auth rule to an encoded admin path', async () => {
-    const auth = defineProxy('auth', () => new Response('denied', { status: 403 }))
-    const handler = proxyChain({ logger: silent }, [auth({ include: path('/admin/**') })])
+    const auth = defineHandler({
+      name: 'auth',
+      handler: () => new Response('denied', { status: 403 }),
+    })
+    const handler = composeChain([[auth, { include: path('/admin/**') }]], { logger: silent })
 
     const encoded = await handler(new NextRequest('http://localhost/%61dmin/users'), {} as never)
     expect(encoded.status).toBe(403)
@@ -41,15 +44,18 @@ describe('scope matching hardening', () => {
   })
 
   it('fails closed with 400 on malformed percent-encoding', async () => {
-    const pass = defineProxy('pass', () => next())
-    const handler = proxyChain({ logger: silent }, [pass])
+    const pass = defineHandler({ name: 'pass', handler: () => next() })
+    const handler = composeChain([pass], { logger: silent })
     const res = await handler(new NextRequest('http://localhost/%E0%A4%A'), {} as never)
     expect(res.status).toBe(400)
   })
 
   it('applies a ** scope to decoded control characters in the path', async () => {
-    const auth = defineProxy('auth', () => new Response('denied', { status: 403 }))
-    const handler = proxyChain({ logger: silent }, [auth({ include: path('/admin/**') })])
+    const auth = defineHandler({
+      name: 'auth',
+      handler: () => new Response('denied', { status: 403 }),
+    })
+    const handler = composeChain([[auth, { include: path('/admin/**') }]], { logger: silent })
     for (const url of [
       'http://localhost/admin/%0Asecret',
       'http://localhost/admin/%0Dsecret',
@@ -60,13 +66,16 @@ describe('scope matching hardening', () => {
     }
   })
 
-  it('rejects a bare object scope instead of matching every request', () => {
-    const rule = { run: () => next(), include: [path('/x/**')] as never }
-    expect(() => proxyChain({ logger: silent }, [rule as never])).toThrow(/needs `host` or `path`/)
+  it('rejects rule objects that are not created by defineHandler', () => {
+    const rule = { run: () => next(), include: [path('/x/**')] }
+    expect(() => composeChain([rule as never], { logger: silent })).toThrow(/defineHandler/)
   })
 
   it('rejects a path segment that mixes a wildcard with other characters', () => {
-    const auth = defineProxy('auth', () => new Response('denied', { status: 403 }))
-    expect(() => auth({ include: '/files/*.pdf' })).toThrow(/mixes a wildcard/)
+    const auth = defineHandler({
+      name: 'auth',
+      handler: () => new Response('denied', { status: 403 }),
+    })
+    expect(() => composeChain([[auth, '/files/*.pdf']])).toThrow(/mixes a wildcard/)
   })
 })

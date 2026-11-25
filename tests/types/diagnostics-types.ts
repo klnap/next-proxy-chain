@@ -1,6 +1,6 @@
 import type { NextFetchEvent, NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
-import { chain, defineHandler } from '../../src/index'
+import { chain as composeChain, defineHandler } from '../../src/index'
 
 type Context = { user?: string }
 
@@ -23,7 +23,7 @@ const auth = defineHandler<Context>({
   },
 })
 
-export const configured = chain([auth], {
+export const configured = composeChain([auth], {
   debug: 'compact',
   tracePath: false,
   onTrace: (trace) => {

@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'bun:test'
 import { NextRequest, NextResponse } from 'next/server'
-import { defineProxy, proxyChain } from '../../src/index'
+import { chain as composeChain, defineHandler } from '../../src/index'
 
 const hostFolder = { hostFolderHeader: 'x-internal-host-folder' } as const
 
 describe('Final Assembler & Security Sanitization', () => {
   it('sanitizes untrusted client-injected x-internal-* headers when no rule sets them', async () => {
-    const chain = proxyChain([
-      defineProxy('noop', () => {
-        return NextResponse.next()
+    const chain = composeChain([
+      defineHandler({
+        name: 'noop',
+        handler: () => {
+          return NextResponse.next()
+        },
       }),
     ])
 
@@ -25,11 +28,14 @@ describe('Final Assembler & Security Sanitization', () => {
   })
 
   it('does not treat x-internal-host-folder as routing unless hostFolderHeader is set', async () => {
-    const chain = proxyChain([
-      defineProxy('multiHost', () => {
-        const headers = new Headers()
-        headers.set('x-internal-host-folder', '/web-app')
-        return NextResponse.next({ request: { headers } })
+    const chain = composeChain([
+      defineHandler({
+        name: 'multiHost',
+        handler: () => {
+          const headers = new Headers()
+          headers.set('x-internal-host-folder', '/web-app')
+          return NextResponse.next({ request: { headers } })
+        },
       }),
     ])
 
@@ -41,13 +47,19 @@ describe('Final Assembler & Security Sanitization', () => {
   })
 
   it('assembles physical path from x-internal-host-folder for pass-through requests', async () => {
-    const chain = proxyChain(hostFolder, [
-      defineProxy('multiHost', () => {
-        const headers = new Headers()
-        headers.set('x-internal-host-folder', '/web-app')
-        return NextResponse.next({ request: { headers } })
-      }),
-    ])
+    const chain = composeChain(
+      [
+        defineHandler({
+          name: 'multiHost',
+          handler: () => {
+            const headers = new Headers()
+            headers.set('x-internal-host-folder', '/web-app')
+            return NextResponse.next({ request: { headers } })
+          },
+        }),
+      ],
+      hostFolder
+    )
 
     const req = new NextRequest('http://app.localhost:3000/dashboard?tab=analytics#section', {
       headers: { host: 'app.localhost:3000' },
@@ -62,17 +74,26 @@ describe('Final Assembler & Security Sanitization', () => {
   })
 
   it('assembles physical path when upstream rule has already rewritten the URL', async () => {
-    const chain = proxyChain(hostFolder, [
-      defineProxy('multiHost', () => {
-        const headers = new Headers()
-        headers.set('x-internal-host-folder', '/(sites)/shop')
-        return NextResponse.next({ request: { headers } })
-      }),
-      defineProxy('i18n', (req) => {
-        const target = new URL('/pl/products?sort=asc', req.url)
-        return NextResponse.rewrite(target)
-      }),
-    ])
+    const chain = composeChain(
+      [
+        defineHandler({
+          name: 'multiHost',
+          handler: () => {
+            const headers = new Headers()
+            headers.set('x-internal-host-folder', '/(sites)/shop')
+            return NextResponse.next({ request: { headers } })
+          },
+        }),
+        defineHandler({
+          name: 'i18n',
+          handler: (req) => {
+            const target = new URL('/pl/products?sort=asc', req.url)
+            return NextResponse.rewrite(target)
+          },
+        }),
+      ],
+      hostFolder
+    )
 
     const req = new NextRequest('http://shop.localhost:3000/pl/produkty', {
       headers: { host: 'shop.localhost:3000' },
@@ -87,16 +108,22 @@ describe('Final Assembler & Security Sanitization', () => {
   })
 
   it("handles root path '/' gracefully for both mapped and unmapped hosts", async () => {
-    const chain = proxyChain(hostFolder, [
-      defineProxy('multiHost', (req) => {
-        if (req.headers.get('host')?.includes('shop')) {
-          const headers = new Headers()
-          headers.set('x-internal-host-folder', '/shop')
-          return NextResponse.next({ request: { headers } })
-        }
-        return NextResponse.next()
-      }),
-    ])
+    const chain = composeChain(
+      [
+        defineHandler({
+          name: 'multiHost',
+          handler: (req) => {
+            if (req.headers.get('host')?.includes('shop')) {
+              const headers = new Headers()
+              headers.set('x-internal-host-folder', '/shop')
+              return NextResponse.next({ request: { headers } })
+            }
+            return NextResponse.next()
+          },
+        }),
+      ],
+      hostFolder
+    )
 
     // Mapped host
     const req1 = new NextRequest('http://shop.localhost:3000/', {

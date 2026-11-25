@@ -1,29 +1,38 @@
 import { describe, expect, it } from 'bun:test'
 import type { NextFetchEvent } from 'next/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { defineProxy, next, path, proxyChain } from '../../src'
+import { chain as composeChain, defineHandler, next, path } from '../../src'
 
 const mockEvent = {} as NextFetchEvent
 
 describe('Next.js 15 Integration: middleware.ts cycle', () => {
   it('executes as a standard Next.js 15 middleware export', async () => {
-    const requestIdProxy = defineProxy('requestId', (req) => {
-      const id = req.headers.get('x-request-id') ?? 'req_test_15'
-      return next({
-        request: { 'x-request-id': id },
-        headers: { 'x-request-id': id },
-      })
+    const requestIdProxy = defineHandler({
+      name: 'requestId',
+      handler: (req) => {
+        const id = req.headers.get('x-request-id') ?? 'req_test_15'
+        return next({
+          request: { 'x-request-id': id },
+          headers: { 'x-request-id': id },
+        })
+      },
     })
 
-    const authProxy = defineProxy('auth', (req) => {
-      const cookie = req.cookies.get('auth_session')?.value
-      if (!cookie) {
-        return NextResponse.redirect(new URL('/login', req.url))
-      }
-      return next()
+    const authProxy = defineHandler({
+      name: 'auth',
+      handler: (req) => {
+        const cookie = req.cookies.get('auth_session')?.value
+        if (!cookie) {
+          return NextResponse.redirect(new URL('/login', req.url))
+        }
+        return next()
+      },
     })
 
-    const middleware = proxyChain([requestIdProxy, authProxy({ include: path('/dashboard/*') })])
+    const middleware = composeChain([
+      requestIdProxy,
+      [authProxy, { include: path('/dashboard/*') }],
+    ])
 
     // 1. Unauthenticated request to /dashboard -> 307 redirect
     const unauthReq = new NextRequest('https://example.com/dashboard/settings')

@@ -1,0 +1,19 @@
+name: Bug report
+description: Report a reproducible defect.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Include a minimal reproduction and the expected behavior.
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime and package version
+      placeholder: "Node.js 24, package 1.2.3"
+    validations:
+      required: true

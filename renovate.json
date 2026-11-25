@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "minimumReleaseAge": "3 days",
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+    "minimumReleaseAge": "0 days"
+  },
+  "packageRules": [
+    {
+      "description": "Automerge stable development dependency updates after CI.",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "development dependencies",
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Keep vulnerability fixes under maintainer review.",
+      "matchJsonata": ["isVulnerabilityAlert = true"],
+      "automerge": false
+    },
+    {
+      "description": "Keep runtime and peer dependency updates under maintainer review.",
+      "matchDepTypes": ["dependencies", "peerDependencies"],
+      "automerge": false
+    }
+  ]
+}

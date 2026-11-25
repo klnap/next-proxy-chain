@@ -13,6 +13,7 @@
   "license": "MIT",
   "author": "klnap",
   "type": "module",
+  "packageManager": "bun@1.4.5",
   "sideEffects": false,
   "keywords": [
     "nextjs",
@@ -35,34 +36,50 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
-      "default": "./dist/index.js"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts",
-    "typecheck": "tsc -p tsconfig.json",
+    "check": "bun run format && bun run lint && bun run typecheck && bun test && bun run build && bun run verify:package",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "changeset:version-check": "bun run changeset:version && bun run check",
+    "format": "biome format src tests examples bench",
+    "format:write": "biome format --write src tests examples bench",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test",
     "test:watch": "bun test --watch",
-    "lint": "biome check .",
+    "lint": "biome lint .",
     "clean": "rm -rf dist coverage",
+    "verify:package": "publint --strict && attw --pack .",
     "prepublishOnly": "bun run clean && bun run typecheck && bun test && bun run build"
   },
   "peerDependencies": {
     "next": ">=15.0.0"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.0",
-    "@biomejs/biome": "2.5.14",
+    "@arethetypeswrong/cli": "0.18.5",
+    "@biomejs/biome": "2.6.8",
+    "@changesets/cli": "3.0.3",
+    "@types/bun": "1.4.5",
     "@types/node": "^20",
+    "npm": "12.2.3",
+    "publint": "0.3.25",
     "next": "16.3.2",
     "tsup": "^8.4.0",
     "typescript": "^5"

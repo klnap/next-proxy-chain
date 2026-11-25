@@ -181,13 +181,13 @@ Factories keep each integration testable on its own. Share one context type acro
 
 ## Log what the chain does
 
-Set `debug: true` to get one line per rule that runs, and warnings for blocked header overrides. Pass a `logger` to send them to your own logging library.
+Set `debug` to `'compact'`, `'detailed'`, or `'verbose'` for built-in request diagnostics. Use `onTrace` for structured data, independent of built-in output.
 
 ```ts
-proxyChain(
-  { debug: process.env.NODE_ENV !== 'production', logger: myLogger },
-  [...rules]
-)
+export default chain(rules, {
+  debug: process.env.NODE_ENV === 'development',
+  onTrace: (trace) => myLogger.info(trace),
+})
 ```
 
-Debug output can include path and header names. Turn it off in production unless your logger is set up for that.
+Debugging defaults to off, even in development. Diagnostics omit query strings, request data, context values, and raw errors. Pathnames can still contain private data; set `tracePath: false` to omit them.

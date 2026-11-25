@@ -1,5 +1,6 @@
 import type { NextFetchEvent, NextRequest, NextResponse } from 'next/server'
 import { NEXT } from './constants'
+import type { DebugLevel, HandlerWhen, TraceCallback } from './diagnostics/types'
 
 /**
  * Configuration options for chain continuation.
@@ -54,11 +55,19 @@ export type CompiledScope = {
   path?: RegExp
 }
 
-export interface BaseProxyRule<TFn> {
+export interface BaseProxyRule<TFn, TContext = ProxyContext> {
   run: TFn
   include?: CompiledScope[]
   exclude?: CompiledScope[]
   name?: string
+  debug?: DebugLevel
+  timeout?: number
+  when?: HandlerWhen<TContext>
+  onError?: OnErrorHandler<TContext>
+  diagnosticRules?: {
+    include?: RouteScopeList
+    exclude?: RouteScopeList
+  }
 }
 
 export type ProxyPathFilter = {
@@ -107,7 +116,7 @@ export type ProxyFn<TContext = ProxyContext> = (
   | void
   | Promise<NextResponse | Response | NextResult | undefined | void>
 
-export type ProxyRule<TContext = ProxyContext> = BaseProxyRule<ProxyFn<TContext>>
+export type ProxyRule<TContext = ProxyContext> = BaseProxyRule<ProxyFn<TContext>, TContext>
 
 export type DefinedProxy<TContext = ProxyContext> = ProxyFn<TContext> &
   ((filter: ProxyPathFilter) => ProxyRule<TContext>) &
@@ -134,11 +143,6 @@ export interface ChainLogger {
   warn: (metaOrMsg: unknown, maybeMsg?: string) => void
   error: (metaOrMsg: unknown, maybeMsg?: string) => void
 }
-
-export type PipelineOutcome =
-  | { kind: 'passed'; duration: number }
-  | { kind: 'next'; duration: number; headers: number }
-  | { kind: 'stop'; duration: number; status: number }
 
 export interface RequestHeaderPolicy {
   blocked?: readonly string[]
@@ -175,8 +179,10 @@ export interface ChainConfig<TContext = ProxyContext> {
    */
   headerMergeStrategy: MergeStrategy
   onError?: OnErrorHandler<TContext>
-  debug: boolean
+  debug: DebugLevel
   logger: ChainLogger
+  onTrace?: TraceCallback
+  tracePath?: boolean
   /** Maximum wall-clock execution time per rule in milliseconds. 0 disables timeout. */
   ruleTimeoutMs: number
   requestHeaderPolicy: RequestHeaderPolicy

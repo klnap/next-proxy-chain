@@ -6,13 +6,22 @@ import { CONTEXT_RULE } from './constants'
 import { createProxyContext } from './context'
 import { cookieItemsFromHeaders, headersDiffer, responseHeaderItems } from './headers'
 import { applyFolderPrefix, isInsideFolder, physicalFolderPrefix } from './host-folder-prefix'
-import { createConsoleLogger, formatPipelineLine } from './logger'
+import { createConsoleLogger } from './logger'
+import { formatTrace, shouldUseColor, supportsUnicode } from './diagnostics/formatter'
+import { safeDestination, safeDiagnosticText } from './diagnostics/sanitize'
+import type {
+  ChainOutcome,
+  ChainTrace,
+  DebugLevel,
+  HandlerTrace,
+  NormalizedDebugLevel,
+} from './diagnostics/types'
 import {
   assertIncludeExcludeNoOverlap,
   canonicalPathname,
   normalizeHost,
   ruleLabel,
-  ruleMatches,
+  ruleMatchReason,
   toRule,
   withPaths,
 } from './matching'
@@ -23,9 +32,11 @@ import {
   resolveRuleResult,
   safeInternalError,
 } from './pipeline'
-import { assertFiniteRuleTimeoutMs, withRuleTimeout } from './timeout'
+import { assertFiniteRuleTimeoutMs, RuleTimeoutError, withRuleTimeout } from './timeout'
 import type {
   ChainConfig,
+  ChainLogger,
+  BaseProxyRule,
   DefinedProxy,
   Entry,
   EntryWrite,
@@ -35,7 +46,104 @@ import type {
   ProxyFn,
   ProxyPathFilter,
   ProxyRule,
+  RouteScopeInput,
+  RouteScopeList,
 } from './types'
+
+function monotonicNow(): number {
+  try {
+    if (typeof globalThis.performance?.now === 'function') return globalThis.performance.now()
+  } catch {
+    // Some edge runtimes expose performance but reject access to it.
+  }
+  return Date.now()
+}
+
+function normalizeDebugLevel(level: DebugLevel): NormalizedDebugLevel {
+  return level === true ? 'detailed' : level
+}
+
+function responseOutcome(response: Response): ChainOutcome {
+  const rewrite = response.headers.get('x-middleware-rewrite')
+  if (rewrite) {
+    return { type: 'rewrite', destination: safeDestination(rewrite) ?? '/' }
+  }
+  const location = response.headers.get('location')
+  if (location && response.status >= 300 && response.status < 400) {
+    return {
+      type: 'redirect',
+      status: response.status,
+      destination: safeDestination(location),
+    }
+  }
+  if (response instanceof NextResponse && response.headers.get('x-middleware-next') === '1') {
+    return { type: 'next' }
+  }
+  return { type: 'response', status: response.status }
+}
+
+function scopeNames(scopeList: RouteScopeList | undefined): string[] | undefined {
+  if (scopeList === undefined) return undefined
+  const scopes = Array.isArray(scopeList) ? scopeList : [scopeList]
+  return scopes.map((scope) => {
+    if (typeof scope === 'string') return safeDiagnosticText(scope, 96)
+    if (scope instanceof RegExp) return safeDiagnosticText(scope.toString(), 96)
+    if (typeof scope !== 'object' || scope === null) return ''
+    const value = scope as Exclude<RouteScopeInput, string | RegExp>
+    const parts = [
+      value.path === undefined
+        ? undefined
+        : Array.isArray(value.path)
+          ? value.path.map(String).join('|')
+          : String(value.path),
+      value.host === undefined
+        ? undefined
+        : Array.isArray(value.host)
+          ? value.host.map(String).join('|')
+          : String(value.host),
+    ].filter(Boolean)
+    return safeDiagnosticText(parts.join(' @ '), 96)
+  })
+}
+
+function handlerDetails<TFn, TContext>(
+  rule: BaseProxyRule<TFn, TContext>,
+  chainTimeout: number,
+  when: 'matched' | 'false' | 'not-evaluated',
+  includeResult?: 'matched' | 'mismatch',
+  excludeResult?: 'not-matched' | 'matched'
+): HandlerTrace['details'] {
+  const include = scopeNames(rule.diagnosticRules?.include)
+  const exclude = scopeNames(rule.diagnosticRules?.exclude)
+  return {
+    ...(include ? { include, includeResult } : {}),
+    ...(exclude ? { exclude, excludeResult } : {}),
+    ...(rule.when ? { when } : {}),
+    timeoutMs: rule.timeout ?? chainTimeout,
+    timeoutSource: rule.timeout === undefined ? 'chain' : 'handler',
+  }
+}
+
+function safeLogger(logger: ChainLogger): ChainLogger {
+  const wrap =
+    (method: keyof ChainLogger) =>
+    (...args: [unknown, string?]) => {
+      try {
+        const result = logger[method](...args) as unknown
+        if (result && typeof (result as { then?: unknown }).then === 'function') {
+          void Promise.resolve(result).catch(() => {})
+        }
+      } catch {
+        // Logging integrations must not affect request behavior.
+      }
+    }
+  return {
+    debug: wrap('debug'),
+    info: wrap('info'),
+    warn: wrap('warn'),
+    error: wrap('error'),
+  }
+}
 
 type RuleRaw = NextResponse | Response | NextResult | undefined | void
 
@@ -126,9 +234,10 @@ function resolveConfig<TContext>(
     requestHeaderPolicy: {},
     strictOverrideCheck: false,
     hostFolderHeader: undefined,
+    tracePath: true,
     ...rest,
     ...(debug !== undefined ? { debug } : {}),
-    logger: logger ?? createConsoleLogger(debug ? 'debug' : 'info'),
+    logger: safeLogger(logger ?? createConsoleLogger('info')),
   } satisfies ChainConfig<TContext>
 
   assertFiniteRuleTimeoutMs(config.ruleTimeoutMs)
@@ -174,7 +283,7 @@ export function proxyChain<TContext>(
   const rules = entries.map(toRule)
   const {
     logger,
-    debug,
+    debug: debugLevel,
     cookieMergeStrategy,
     headerMergeStrategy,
     ruleTimeoutMs,
@@ -182,29 +291,87 @@ export function proxyChain<TContext>(
     strictOverrideCheck,
     hostFolderHeader,
   } = config
+  const debug = debugLevel !== false
+  const hasHandlerDebug = rules.some((rule) => rule.debug != null && rule.debug !== false)
+  const hasDetailedHandlerDebug = rules.some(
+    (rule) => rule.debug === true || rule.debug === 'detailed' || rule.debug === 'verbose'
+  )
+  const diagnosticsEnabled = debug || config.onTrace !== undefined || hasHandlerDebug
 
   assertOverrideMechanismSupported(strictOverrideCheck)
 
   for (let i = 0; i < rules.length; i++) {
     assertIncludeExcludeNoOverlap(rules[i]!.include, rules[i]!.exclude, ruleLabel(rules[i]!, i))
+    assertFiniteRuleTimeoutMs(rules[i]!.timeout)
   }
 
   return async function proxy(req: NextRequest, event: NextFetchEvent) {
+    const startedAt = diagnosticsEnabled ? monotonicNow() : 0
+    const diagnostics: HandlerTrace[] | null = diagnosticsEnabled ? [] : null
+    let nextHandlerIndex = 0
+    const finish = (
+      response: NextResponse | Response,
+      forcedOutcome?: ChainOutcome
+    ): NextResponse | Response => {
+      if (!diagnostics) return response
+      for (let i = nextHandlerIndex; i < rules.length; i++) {
+        diagnostics.push({
+          name: safeDiagnosticText(ruleLabel(rules[i]!, i), 64),
+          outcome: 'not-reached',
+        })
+      }
+      const trace: ChainTrace = {
+        method: safeDiagnosticText(req.method, 16),
+        pathname: config.tracePath === false ? undefined : safeDiagnosticText(req.nextUrl.pathname),
+        durationMs: monotonicNow() - startedAt,
+        outcome: forcedOutcome ?? responseOutcome(response),
+        handlers: diagnostics,
+      }
+      if (config.onTrace) {
+        try {
+          void Promise.resolve(config.onTrace(trace)).catch(() => {})
+        } catch {
+          // Observability must not change the request outcome.
+        }
+      }
+      const globalLevel = normalizeDebugLevel(debugLevel)
+      if (globalLevel !== false || hasHandlerDebug) {
+        const visible = diagnostics.filter((_handler, index) => {
+          const local = rules[index]?.debug
+          if (local === false) return false
+          if (local === 'compact') return globalLevel === 'compact'
+          if (local != null) return true
+          return globalLevel !== false && !(globalLevel === 'compact' && hasDetailedHandlerDebug)
+        })
+        const level =
+          (globalLevel === 'compact' || globalLevel === false) && hasDetailedHandlerDebug
+            ? 'detailed'
+            : globalLevel === false
+              ? 'compact'
+              : globalLevel
+        try {
+          config.logger.info(
+            formatTrace(
+              level === 'compact' ? trace : { ...trace, handlers: visible },
+              level,
+              shouldUseColor(),
+              supportsUnicode()
+            )
+          )
+        } catch {
+          // A custom logger is an external integration, not part of request execution.
+        }
+      }
+      return response
+    }
+
     let ctx: TContext
     try {
       ctx = config.createContext(req, event)
-    } catch (err) {
-      logger.error({ err }, 'createContext threw')
-      return safeInternalError()
+    } catch {
+      if (!diagnosticsEnabled) logger.error('request context creation failed')
+      return finish(safeInternalError(), { type: 'error', status: 500, classification: 'engine' })
     }
-
-    const method = req.method
-    const pathname = req.nextUrl.pathname
-    const traceId =
-      req.headers.get('x-request-id') ??
-      req.headers.get('traceparent') ??
-      req.headers.get('x-b3-traceid') ??
-      undefined
 
     let currentReq = req
     let pendingRequestOverrides: Headers | null = null
@@ -260,16 +427,87 @@ export function proxyChain<TContext>(
       req: NextRequest,
       startedAt: number
     ): Promise<{ raw: RuleRaw } | { response: NextResponse | Response }> => {
-      if (!config.onError) {
-        logger.error({ rule: label, err }, 'rule threw')
-        return { response: failClosed() }
+      const timeoutError = err instanceof RuleTimeoutError
+      const durationMs = () => (diagnosticsEnabled ? monotonicNow() - startedAt : 0)
+      const errorHandler = rules[i]!.onError ?? config.onError
+      const errorPolicy = rules[i]!.onError ? 'handler' : 'chain'
+      if (!errorHandler) {
+        if (!diagnosticsEnabled) logger.error('handler failed')
+        diagnostics?.push({
+          name: safeDiagnosticText(label, 64),
+          outcome: timeoutError ? 'timeout' : 'failed',
+          durationMs: durationMs(),
+          policy: 'none',
+          details: handlerDetails(rules[i]!, ruleTimeoutMs, 'matched', 'matched', 'not-matched'),
+        })
+        nextHandlerIndex = i + 1
+        return {
+          response: finish(
+            failClosed(),
+            timeoutError
+              ? {
+                  type: 'timeout',
+                  status: 500,
+                  timeoutMs: err instanceof RuleTimeoutError ? err.timeoutMs : ruleTimeoutMs,
+                }
+              : { type: 'error', status: 500, classification: 'handler' }
+          ),
+        }
       }
       try {
-        const recovered = await config.onError(err, i, req, ctx)
-        if (recovered == null) return { response: failClosed() }
+        const recovered = await errorHandler(err, i, req, ctx)
+        if (recovered == null) {
+          diagnostics?.push({
+            name: safeDiagnosticText(label, 64),
+            outcome: timeoutError ? 'timeout' : 'failed',
+            durationMs: durationMs(),
+            policy: errorPolicy,
+            details: handlerDetails(rules[i]!, ruleTimeoutMs, 'matched', 'matched', 'not-matched'),
+          })
+          nextHandlerIndex = i + 1
+          return {
+            response: finish(
+              failClosed(),
+              timeoutError
+                ? {
+                    type: 'timeout',
+                    status: 500,
+                    timeoutMs: err instanceof RuleTimeoutError ? err.timeoutMs : ruleTimeoutMs,
+                  }
+                : { type: 'error', status: 500, classification: 'handler' }
+            ),
+          }
+        }
         // NextResponse.next() is a Response; treat it as continuation, not a stop.
-        if (isNextResult(recovered) || isNextResponse(recovered)) return { raw: recovered }
-        if (!(recovered instanceof Response)) return { response: failClosed() }
+        if (isNextResult(recovered) || isNextResponse(recovered)) {
+          diagnostics?.push({
+            name: safeDiagnosticText(label, 64),
+            outcome: 'recovered',
+            durationMs: durationMs(),
+            recovery: 'continue',
+            policy: errorPolicy,
+            details: handlerDetails(rules[i]!, ruleTimeoutMs, 'matched', 'matched', 'not-matched'),
+          })
+          nextHandlerIndex = i + 1
+          return { raw: recovered }
+        }
+        if (!(recovered instanceof Response)) {
+          diagnostics?.push({
+            name: safeDiagnosticText(label, 64),
+            outcome: timeoutError ? 'timeout' : 'failed',
+            durationMs: durationMs(),
+            policy: errorPolicy,
+            details: handlerDetails(rules[i]!, ruleTimeoutMs, 'matched', 'matched', 'not-matched'),
+          })
+          nextHandlerIndex = i + 1
+          return {
+            response: finish(failClosed(), {
+              type: 'error',
+              status: 500,
+              classification: 'handler',
+            }),
+          }
+        }
 
         stripRoutingOverrides(recovered)
         headerWrites.push({
@@ -282,35 +520,50 @@ export function proxyChain<TContext>(
           ruleName: label,
           items: cookieItemsFromHeaders(recovered.headers),
         })
-        if (debug) {
-          logger.debug(
-            formatPipelineLine({
-              method,
-              path: pathname,
-              name: label,
-              traceId,
-              outcome: {
-                kind: 'stop',
-                duration: performance.now() - startedAt,
-                status: recovered.status,
-              },
-            })
-          )
-        }
+        diagnostics?.push({
+          name: safeDiagnosticText(label, 64),
+          outcome: 'recovered',
+          durationMs: durationMs(),
+          recovery:
+            responseOutcome(recovered).type === 'redirect'
+              ? 'redirect'
+              : responseOutcome(recovered).type === 'rewrite'
+                ? 'rewrite'
+                : 'response',
+          policy: errorPolicy,
+          details: handlerDetails(rules[i]!, ruleTimeoutMs, 'matched', 'matched', 'not-matched'),
+        })
+        nextHandlerIndex = i + 1
         return {
-          response: finalizeResponse(
-            recovered,
-            headerWrites,
-            cookieWrites,
-            headerMergeStrategy,
-            cookieMergeStrategy,
-            logger,
-            debug
+          response: finish(
+            finalizeResponse(
+              recovered,
+              headerWrites,
+              cookieWrites,
+              headerMergeStrategy,
+              cookieMergeStrategy,
+              logger,
+              debug
+            )
           ),
         }
-      } catch (onErrorErr) {
-        logger.error({ rule: label, err: onErrorErr }, 'onError handler threw')
-        return { response: failClosed() }
+      } catch {
+        if (!diagnosticsEnabled) logger.error('chain error handler failed')
+        diagnostics?.push({
+          name: safeDiagnosticText(label, 64),
+          outcome: timeoutError ? 'timeout' : 'failed',
+          durationMs: durationMs(),
+          policy: errorPolicy,
+          details: handlerDetails(rules[i]!, ruleTimeoutMs, 'matched', 'matched', 'not-matched'),
+        })
+        nextHandlerIndex = i + 1
+        return {
+          response: finish(failClosed(), {
+            type: 'error',
+            status: 500,
+            classification: 'handler',
+          }),
+        }
       }
     }
 
@@ -326,21 +579,60 @@ export function proxyChain<TContext>(
         // Match the decoded path Next.js resolves; a raw, encoded path would skip include-scoped rules.
         const matchPath = canonicalPathname(activeReq.nextUrl.pathname)
         if (matchPath === null) {
-          return new NextResponse('Bad Request', {
-            status: 400,
-            headers: { 'content-type': 'text/plain; charset=utf-8' },
-          })
+          return finish(
+            new NextResponse('Bad Request', {
+              status: 400,
+              headers: { 'content-type': 'text/plain; charset=utf-8' },
+            })
+          )
         }
-        if (!ruleMatches(matchPath, reqHost, rule)) continue
+        nextHandlerIndex = i
+        const skipReason = ruleMatchReason(matchPath, reqHost, rule)
+        if (skipReason) {
+          diagnostics?.push({
+            name: safeDiagnosticText(label, 64),
+            outcome: 'skipped',
+            reason: skipReason,
+            details: handlerDetails(
+              rule,
+              ruleTimeoutMs,
+              'not-evaluated',
+              skipReason === 'include-mismatch' ? 'mismatch' : undefined,
+              skipReason === 'exclude-match'
+                ? 'matched'
+                : skipReason === 'include-mismatch' && rule.exclude
+                  ? 'not-matched'
+                  : undefined
+            ),
+          })
+          nextHandlerIndex = i + 1
+          continue
+        }
 
-        const startedAt = debug ? performance.now() : 0
+        const startedAt = diagnosticsEnabled ? monotonicNow() : 0
         let raw: RuleRaw
         try {
-          raw = await withRuleTimeout(
-            Promise.resolve(rule.run(activeReq, ctx, event)),
-            ruleTimeoutMs,
+          const result = await withRuleTimeout(
+            (async () => {
+              if (rule.when && !(await rule.when(activeReq, event, ctx))) {
+                return { kind: 'skipped' as const }
+              }
+              return { kind: 'result' as const, raw: await rule.run(activeReq, ctx, event) }
+            })(),
+            rule.timeout ?? ruleTimeoutMs,
             label
           )
+          if (result.kind === 'skipped') {
+            diagnostics?.push({
+              name: safeDiagnosticText(label, 64),
+              outcome: 'skipped',
+              reason: 'when-false',
+              details: handlerDetails(rule, ruleTimeoutMs, 'false', 'matched', 'not-matched'),
+            })
+            nextHandlerIndex = i + 1
+            continue
+          }
+          raw = result.raw
         } catch (err) {
           const recovered = await recoverRuleError(err, i, label, activeReq, startedAt)
           if ('response' in recovered) return recovered.response
@@ -356,7 +648,7 @@ export function proxyChain<TContext>(
           if ('response' in recovered) return recovered.response
           outcome = resolveRuleResult(recovered.raw, requestHeaderPolicy, logger, debug)
         }
-        const duration = debug ? performance.now() - startedAt : 0
+        const duration = diagnosticsEnabled ? monotonicNow() - startedAt : 0
 
         if (outcome.kind === 'continue') {
           if (outcome.rewriteUrl) {
@@ -380,25 +672,43 @@ export function proxyChain<TContext>(
             cookieWrites.push({ ruleIndex: i, ruleName: label, items: outcome.cookies })
           }
 
-          if (debug) {
-            const mutated =
-              outcome.responseHeaders.size +
-              outcome.cookies.size +
-              (outcome.request ? 1 : 0) +
-              (outcome.rewriteUrl ? 1 : 0)
-            logger.debug(
-              formatPipelineLine({
-                method,
-                path: pathname,
-                name: label,
-                traceId,
-                outcome:
-                  mutated === 0
-                    ? { kind: 'passed', duration }
-                    : { kind: 'next', duration, headers: outcome.responseHeaders.size },
-              })
+          if (diagnostics?.at(-1)?.outcome !== 'recovered') {
+            diagnostics?.push(
+              outcome.rewriteUrl
+                ? {
+                    name: safeDiagnosticText(label, 64),
+                    outcome: 'rewrite',
+                    durationMs: duration,
+                    destination: safeDestination(outcome.rewriteUrl) ?? '/',
+                    final: false,
+                    details: handlerDetails(
+                      rule,
+                      ruleTimeoutMs,
+                      'matched',
+                      'matched',
+                      'not-matched'
+                    ),
+                  }
+                : {
+                    name: safeDiagnosticText(label, 64),
+                    outcome: 'continue',
+                    source: isNextResult(raw)
+                      ? 'next()'
+                      : raw instanceof NextResponse && raw.headers.get('x-middleware-next') === '1'
+                        ? 'NextResponse.next()'
+                        : 'undefined',
+                    durationMs: duration,
+                    details: handlerDetails(
+                      rule,
+                      ruleTimeoutMs,
+                      'matched',
+                      'matched',
+                      'not-matched'
+                    ),
+                  }
             )
           }
+          nextHandlerIndex = i + 1
           continue
         }
 
@@ -414,21 +724,35 @@ export function proxyChain<TContext>(
           items: cookieItemsFromHeaders(outcome.response.headers),
         })
 
-        if (debug) {
-          logger.debug(
-            formatPipelineLine({
-              method,
-              path: pathname,
-              name: label,
-              traceId,
-              outcome: {
-                kind: 'stop',
-                duration,
-                status: outcome.response.status,
-              },
-            })
-          )
-        }
+        const terminalOutcome = responseOutcome(outcome.response)
+        diagnostics?.push(
+          terminalOutcome.type === 'redirect'
+            ? {
+                name: safeDiagnosticText(label, 64),
+                outcome: 'redirect',
+                durationMs: duration,
+                status: terminalOutcome.status,
+                destination: terminalOutcome.destination,
+                details: handlerDetails(rule, ruleTimeoutMs, 'matched', 'matched', 'not-matched'),
+              }
+            : terminalOutcome.type === 'rewrite'
+              ? {
+                  name: safeDiagnosticText(label, 64),
+                  outcome: 'rewrite',
+                  durationMs: duration,
+                  destination: terminalOutcome.destination,
+                  final: true,
+                  details: handlerDetails(rule, ruleTimeoutMs, 'matched', 'matched', 'not-matched'),
+                }
+              : {
+                  name: safeDiagnosticText(label, 64),
+                  outcome: 'response',
+                  durationMs: duration,
+                  status: outcome.response.status,
+                  details: handlerDetails(rule, ruleTimeoutMs, 'matched', 'matched', 'not-matched'),
+                }
+        )
+        nextHandlerIndex = i + 1
 
         const internalFolder = hostFolderHeader
           ? appliedRequestOverrides.get(hostFolderHeader)
@@ -442,14 +766,23 @@ export function proxyChain<TContext>(
           )
         }
 
-        return finalizeResponse(
-          outcome.response,
-          headerWrites,
-          cookieWrites,
-          headerMergeStrategy,
-          cookieMergeStrategy,
-          logger,
-          debug
+        const finalTerminalOutcome = responseOutcome(outcome.response)
+        const terminalTrace = diagnostics?.at(-1)
+        if (finalTerminalOutcome.type === 'rewrite' && terminalTrace?.outcome === 'rewrite') {
+          terminalTrace.destination = finalTerminalOutcome.destination
+        }
+
+        return finish(
+          finalizeResponse(
+            outcome.response,
+            headerWrites,
+            cookieWrites,
+            headerMergeStrategy,
+            cookieMergeStrategy,
+            logger,
+            debug
+          ),
+          finalTerminalOutcome
         )
       }
 
@@ -485,7 +818,7 @@ export function proxyChain<TContext>(
         final = NextResponse.next(requestInit)
       }
 
-      return finalizeResponse(
+      const finalResponse = finalizeResponse(
         final,
         headerWrites,
         cookieWrites,
@@ -494,29 +827,45 @@ export function proxyChain<TContext>(
         logger,
         debug
       )
+      if (finalRewriteUrl) {
+        const destination = safeDestination(finalRewriteUrl) ?? '/'
+        const rewrite = diagnostics?.filter((handler) => handler.outcome === 'rewrite').at(-1)
+        if (rewrite?.outcome === 'rewrite') {
+          rewrite.destination = destination
+          rewrite.final = true
+        }
+      }
+      return finish(finalResponse)
     } catch (err) {
-      logger.error({ err }, 'proxy chain failed')
+      if (!diagnosticsEnabled) logger.error('proxy chain execution failed')
       if (config.onError) {
         try {
           const recovered = await config.onError(err, -1, materializeRequest(), ctx)
           // No later rule can run here, so a continuation response would skip them. Fail closed.
           if (recovered instanceof Response && !isNextResponse(recovered)) {
             stripRoutingOverrides(recovered)
-            return finalizeResponse(
-              recovered,
-              headerWrites,
-              cookieWrites,
-              headerMergeStrategy,
-              cookieMergeStrategy,
-              logger,
-              debug
+            return finish(
+              finalizeResponse(
+                recovered,
+                headerWrites,
+                cookieWrites,
+                headerMergeStrategy,
+                cookieMergeStrategy,
+                logger,
+                debug
+              )
             )
           }
         } catch {
           /* fall through to safe 500 */
         }
       }
-      return failClosed()
+      return finish(
+        failClosed(),
+        err instanceof RuleTimeoutError
+          ? { type: 'timeout', status: 500, timeoutMs: err.timeoutMs }
+          : { type: 'error', status: 500, classification: 'engine' }
+      )
     }
   }
 }

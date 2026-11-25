@@ -4,6 +4,7 @@ import type {
   HostMatcher,
   PathMatcher,
   ProxyPathFilter,
+  ProxyContext,
   RouteScopeList,
 } from './types'
 
@@ -169,13 +170,15 @@ function scopeMatches(pathname: string, hostname: string | null, scope: Compiled
   return true
 }
 
-export function toRule<TFn>(entry: TFn | BaseProxyRule<TFn>): BaseProxyRule<TFn> {
+export function toRule<TFn, TContext = ProxyContext>(
+  entry: TFn | BaseProxyRule<TFn, TContext>
+): BaseProxyRule<TFn, TContext> {
   if (typeof entry === 'function') {
     const name = extractMeaningfulName((entry as { name?: string }).name)
     return name ? { run: entry, name } : { run: entry }
   }
 
-  const rule = entry as BaseProxyRule<TFn>
+  const rule = entry as BaseProxyRule<TFn, TContext>
   const runName =
     typeof rule.run === 'function'
       ? extractMeaningfulName((rule.run as { name?: string }).name)
@@ -204,7 +207,10 @@ export function toRule<TFn>(entry: TFn | BaseProxyRule<TFn>): BaseProxyRule<TFn>
   }
 }
 
-export function ruleLabel<TFn>(rule: BaseProxyRule<TFn>, index: number): string {
+export function ruleLabel<TFn, TContext = ProxyContext>(
+  rule: BaseProxyRule<TFn, TContext>,
+  index: number
+): string {
   const runName =
     typeof rule.run === 'function'
       ? extractMeaningfulName((rule.run as { name?: string }).name)
@@ -215,25 +221,34 @@ export function ruleLabel<TFn>(rule: BaseProxyRule<TFn>, index: number): string 
 /**
  * Decorates a proxy entry with declarative path and host inclusion/exclusion filters.
  */
-export function withPaths<TFn>(
-  entry: TFn | BaseProxyRule<TFn>,
+export function withPaths<TFn, TContext = ProxyContext>(
+  entry: TFn | BaseProxyRule<TFn, TContext>,
   filter: ProxyPathFilter
-): BaseProxyRule<TFn> {
-  const base = toRule(entry)
+): BaseProxyRule<TFn, TContext> {
+  const base = toRule<TFn, TContext>(entry)
   const include = compileScopes(filter.include)
   const exclude = compileScopes(filter.exclude)
   const name = filter.name ?? base.name
   assertIncludeExcludeNoOverlap(include, exclude, name ?? 'proxy')
-  return { run: base.run, include, exclude, name }
+  return {
+    run: base.run,
+    include,
+    exclude,
+    name,
+    debug: base.debug,
+    timeout: base.timeout,
+    when: base.when,
+    diagnosticRules: { include: filter.include, exclude: filter.exclude },
+  }
 }
 
 /**
  * Determines whether a given request matches a rule's scoping constraints.
  */
-export function ruleMatches<TFn>(
+export function ruleMatches<TFn, TContext = ProxyContext>(
   pathname: string,
   hostname: string | null,
-  rule: BaseProxyRule<TFn>
+  rule: BaseProxyRule<TFn, TContext>
 ): boolean {
   if (rule.exclude?.some((scope) => scopeMatches(pathname, hostname, scope))) return false
   if (rule.include && !rule.include.some((scope) => scopeMatches(pathname, hostname, scope))) {
@@ -242,7 +257,24 @@ export function ruleMatches<TFn>(
   return true
 }
 
-export function pathMatches<TFn>(pathname: string, rule: BaseProxyRule<TFn>): boolean {
+export function ruleMatchReason<TFn, TContext = ProxyContext>(
+  pathname: string,
+  hostname: string | null,
+  rule: BaseProxyRule<TFn, TContext>
+): 'include-mismatch' | 'exclude-match' | undefined {
+  if (rule.exclude?.some((scope) => scopeMatches(pathname, hostname, scope))) {
+    return 'exclude-match'
+  }
+  if (rule.include && !rule.include.some((scope) => scopeMatches(pathname, hostname, scope))) {
+    return 'include-mismatch'
+  }
+  return undefined
+}
+
+export function pathMatches<TFn, TContext = ProxyContext>(
+  pathname: string,
+  rule: BaseProxyRule<TFn, TContext>
+): boolean {
   return ruleMatches(pathname, null, rule)
 }
 

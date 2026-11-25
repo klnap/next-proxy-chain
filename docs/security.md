@@ -71,6 +71,14 @@ Do not put identity or authorization data into `request` headers unless the rule
 - Cookies are identified by name, domain, and path. A later `Set-Cookie` with the same identity replaces the earlier one by default. Set `cookieMergeStrategy` to `first-write-wins`, or a function, if an earlier session cookie must not be replaced.
 - Next.js routing headers (`x-middleware-override-headers`, `x-middleware-request-*`) are removed from terminal responses. This includes responses returned by `onError`.
 
+## Diagnostics and privacy
+
+Debug output and `onTrace` are off unless explicitly enabled. Diagnostics never include request or response headers, cookies, bodies, context values, or raw errors. Redirect and rewrite query values are redacted.
+
+Pathnames can still contain user IDs or other personal data. Set `tracePath: false` to omit them from both formatted output and structured traces. Handler names and configured scope strings are sanitized and length-limited before diagnostics; terminal control characters cannot inject ANSI escapes or extra lines.
+
+Treat traces as operational data. External logger callbacks can persist them beyond the request, and the package cannot control their retention, access, or cross-process ordering.
+
 ## Error recovery
 
 `onError` decides what happens after a rule throws or times out:

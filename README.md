@@ -1,8 +1,6 @@
 # @klnap/next-proxy-chain
 
-Run several Next.js `proxy.ts` (or `middleware.ts`) handlers as one chain. Each handler can be a plain native Next.js function, scoped to certain paths, and the chain stops or continues according to what each handler returns.
-
-Next.js exports one proxy per app. As soon as the file contains an auth check, a locale redirect, and some security headers, the order matters and the pieces end up in one long function. This package keeps each handler separate and keeps the order visible.
+Composable proxy and middleware for Next.js.
 
 ```ts
 import { chain } from '@klnap/next-proxy-chain'

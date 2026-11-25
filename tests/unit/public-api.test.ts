@@ -7,6 +7,7 @@ describe('public API surface', () => {
       'RuleTimeoutError',
       'chain',
       'createProxyContext',
+      'defineHandler',
       'defineProxy',
       'host',
       'isNextResult',

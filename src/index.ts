@@ -1,6 +1,7 @@
 export { isNextResult, next } from './core/actions'
 export type { ChainEntry, ChainScope } from './core/chain'
 export { chain } from './core/chain'
+export { defineHandler } from './core/handler'
 export { createProxyContext } from './core/context'
 export { defineProxy, proxyChain } from './core/engine'
 export { host, path } from './core/matching'
@@ -24,3 +25,14 @@ export type {
   ProxyRule,
   RequestHeaderPolicy,
 } from './core/types'
+export type {
+  HandlerDebugOptions,
+  HandlerDiagnosticDetails,
+  HandlerWhen,
+  TraceCallback,
+  ChainOutcome,
+  ChainTrace,
+  DebugLevel,
+  HandlerTrace,
+  SkipReason,
+} from './core/diagnostics/types'

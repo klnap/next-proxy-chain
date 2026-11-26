@@ -26,7 +26,9 @@ describe("scope matching hardening", () => {
 
   it("strips a trailing dot from the Host header", () => {
     expect(normalizeHost("admin.example.com.")).toBe("admin.example.com");
-    expect(host("admin.example.com").test(normalizeHost("admin.example.com.") ?? "")).toBe(true);
+    expect(host(/^admin\.example\.com$/).test(normalizeHost("admin.example.com.") ?? "")).toBe(
+      true,
+    );
   });
 
   it("applies an include-scoped auth rule to an encoded admin path", async () => {

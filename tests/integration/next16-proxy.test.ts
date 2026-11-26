@@ -41,7 +41,10 @@ describe("Next.js 16 Integration: proxy.ts cycle", () => {
 
     const proxy = composeChain([
       multiHostProxy,
-      [rateLimitProxy, { include: { host: host(["admin.platform.com", "store.platform.com"]) } }],
+      [
+        rateLimitProxy,
+        { include: { host: host([/^admin\.platform\.com$/, /^store\.platform\.com$/]) } },
+      ],
     ]);
 
     // 1. Admin host request

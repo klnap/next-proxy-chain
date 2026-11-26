@@ -1,5 +1,5 @@
 import type { NextFetchEvent } from "next/server";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server.js";
 
 import { isNextResult } from "./actions";
 import { createProxyContext } from "./context";

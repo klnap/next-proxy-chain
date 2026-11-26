@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import * as api from "@klnap/next-proxy-chain";
-import { NextRequest } from "next/server";
+import { NextRequest } from "next/server.js";
 
 assert.deepEqual(Object.keys(api).sort(), [
   "RuleTimeoutError",

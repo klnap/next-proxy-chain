@@ -1,5 +1,5 @@
-import { NEXT } from './constants'
-import type { NextOptions, NextResult } from './types'
+import { NEXT } from "./constants";
+import type { NextOptions, NextResult } from "./types";
 
 /**
  * Creates a continuation action instructing the proxy chain to proceed to subsequent rules.
@@ -8,7 +8,7 @@ import type { NextOptions, NextResult } from './types'
  * @returns NextResult token indicating pipeline continuation.
  */
 export function next(options: NextOptions = {}): NextResult {
-  return { [NEXT]: true, ...options }
+  return { [NEXT]: true, ...options };
 }
 
 /**
@@ -18,5 +18,5 @@ export function next(options: NextOptions = {}): NextResult {
  * @returns True if value is a NextResult continuation token.
  */
 export function isNextResult(value: unknown): value is NextResult {
-  return typeof value === 'object' && value !== null && NEXT in value
+  return typeof value === "object" && value !== null && NEXT in value;
 }

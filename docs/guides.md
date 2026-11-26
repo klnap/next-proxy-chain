@@ -7,18 +7,18 @@ Each recipe is short and links to a runnable file in [`examples/`](../examples/)
 Scope the rule with `include`. Use `**` so that every route below the prefix is covered.
 
 ```ts
-import { chain, defineHandler, next, path } from '@klnap/next-proxy-chain'
+import { chain, defineHandler, next, path } from "@klnap/next-proxy-chain";
 
 const requireApiKey = defineHandler({
-  name: 'api-key',
-  rules: { include: path('/api/**') },
+  name: "api-key",
+  rules: { include: path("/api/**") },
   handler: (request) => {
-    if (!request.headers.get('x-api-key')) return new Response('Unauthorized', { status: 401 })
-    return next()
+    if (!request.headers.get("x-api-key")) return new Response("Unauthorized", { status: 401 });
+    return next();
   },
-})
+});
 
-export default chain([requireApiKey])
+export default chain([requireApiKey]);
 ```
 
 `/api/**` covers `/api`, `/api/users`, and `/api/users/123`. A pattern such as `/api/*` covers only one segment.
@@ -31,11 +31,8 @@ Add `exclude` next to `include`. `exclude` wins when both match.
 
 ```ts
 export default chain([
-  [
-    requireApiKey,
-    { include: path('/api/**'), exclude: path('/api/public/**') },
-  ],
-])
+  [requireApiKey, { include: path("/api/**"), exclude: path("/api/public/**") }],
+]);
 ```
 
 Make sure the excluded paths are truly public. Anything the exclusion matches skips every check on that rule.
@@ -44,12 +41,12 @@ Make sure the excluded paths are truly public. Anything the exclusion matches sk
 
 ```ts
 const adminOnly = defineHandler({
-  name: 'admin',
-  rules: { include: { host: 'admin.example.com', path: '/settings/**' } },
-  handler: () => new Response('Forbidden', { status: 403 }),
-})
+  name: "admin",
+  rules: { include: { host: "admin.example.com", path: "/settings/**" } },
+  handler: () => new Response("Forbidden", { status: 403 }),
+});
 
-export default chain([adminOnly])
+export default chain([adminOnly]);
 ```
 
 Host matching uses the `host` header. Treat it as routing, not as access control. See [Security: Host matching](security.md#host-matching).
@@ -60,20 +57,17 @@ Put the rule first, so it also runs before any redirect.
 
 ```ts
 const securityHeaders = defineHandler({
-  name: 'security-headers',
+  name: "security-headers",
   handler: () =>
     next({
       headers: {
-        'x-frame-options': 'DENY',
-        'x-content-type-options': 'nosniff',
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
       },
     }),
-})
+});
 
-export default chain([
-  securityHeaders,
-  [requireSession, { include: path('/dashboard/**') }],
-])
+export default chain([securityHeaders, [requireSession, { include: path("/dashboard/**") }]]);
 ```
 
 [examples/01](../examples/01-quick-start.ts) shows the complete file.
@@ -83,30 +77,27 @@ export default chain([
 Pass `createContext` to type the context. Each request gets a new object.
 
 ```ts
-type RequestState = { requestId: string; locale?: string }
+type RequestState = { requestId: string; locale?: string };
 
 const trackRequest = defineHandler<RequestState>({
-  name: 'track-request',
+  name: "track-request",
   handler: (request, _event, context) => {
-    context.requestId = request.headers.get('x-request-id') ?? crypto.randomUUID()
-    return next({ request: { 'x-request-id': context.requestId } })
+    context.requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+    return next({ request: { "x-request-id": context.requestId } });
   },
-})
+});
 
 const detectLocale = defineHandler<RequestState>({
-  name: 'detect-locale',
+  name: "detect-locale",
   handler: (request, _event, context) => {
-    context.locale = request.headers.get('accept-language')?.startsWith('pl') ? 'pl' : 'en'
-    return next()
+    context.locale = request.headers.get("accept-language")?.startsWith("pl") ? "pl" : "en";
+    return next();
   },
-})
+});
 
-export default chain([
-  trackRequest,
-  detectLocale,
-], {
-  createContext: (): RequestState => ({ requestId: '' }),
-})
+export default chain([trackRequest, detectLocale], {
+  createContext: (): RequestState => ({ requestId: "" }),
+});
 ```
 
 Use the context inside the chain. Route handlers cannot read it. To pass a value to a route handler, use a request header, as `trackRequest` does. [examples/03](../examples/03-typed-context.ts) has the complete file.
@@ -116,7 +107,7 @@ Use the context inside the chain. Route handlers cannot read it. To pass a value
 Use `next({ request })`. The handler reads it with `headers()` or `request.headers`.
 
 ```ts
-next({ request: { 'x-user-tier': 'free' } })
+next({ request: { "x-user-tier": "free" } });
 ```
 
 Headers you pass this way go through `requestHeaderPolicy`. By default, `cookie` and `authorization` cannot be set this way. [examples/04](../examples/04-request-and-response-headers.ts) shows which names are dropped.
@@ -126,7 +117,7 @@ Headers you pass this way go through `requestHeaderPolicy`. By default, `cookie`
 Use `headers`. This is what the browser receives.
 
 ```ts
-next({ headers: { 'cache-control': 'no-store' } })
+next({ headers: { "cache-control": "no-store" } });
 ```
 
 Request headers and response headers are separate channels. Setting one does not set the other.
@@ -139,14 +130,14 @@ Return `NextResponse.redirect`. The chain stops, so rules after it do not run.
 
 ```ts
 const legacyRedirect = defineHandler({
-  name: 'legacy-redirect',
+  name: "legacy-redirect",
   handler: (request) => {
-    if (request.nextUrl.pathname === '/old') {
-      return NextResponse.redirect(new URL('/new', request.url), 308)
+    if (request.nextUrl.pathname === "/old") {
+      return NextResponse.redirect(new URL("/new", request.url), 308);
     }
-    return next()
+    return next();
   },
-})
+});
 ```
 
 ## Rewrite a path and keep going
@@ -155,25 +146,25 @@ Return `NextResponse.rewrite`. The chain continues, and later rules see the new 
 
 ```ts
 const localeRewrite = defineHandler({
-  name: 'locale-rewrite',
+  name: "locale-rewrite",
   handler: (request) => {
-    const { pathname } = request.nextUrl
-    if (pathname.startsWith('/pl/')) return undefined
-    return NextResponse.rewrite(new URL(`/pl${pathname}`, request.url))
+    const { pathname } = request.nextUrl;
+    if (pathname.startsWith("/pl/")) return undefined;
+    return NextResponse.rewrite(new URL(`/pl${pathname}`, request.url));
   },
-})
+});
 
 // Without a matcher the rewrite would also run for static files and API routes.
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|api|favicon.ico).*)'],
-}
+  matcher: ["/((?!_next/static|_next/image|api|favicon.ico).*)"],
+};
 
 // Runs for /pl/... only, including requests that were just rewritten to it.
 const plOnly = defineHandler({
-  name: 'pl-only',
-  rules: { include: path('/pl/**') },
-  handler: () => next({ headers: { 'content-language': 'pl' } }),
-})
+  name: "pl-only",
+  rules: { include: path("/pl/**") },
+  handler: () => next({ headers: { "content-language": "pl" } }),
+});
 ```
 
 [examples/05](../examples/05-redirect-and-rewrite.ts) combines a redirect and a rewrite.
@@ -185,8 +176,8 @@ Use `onError` for rules that call other services. Return a response that you cho
 ```ts
 export default chain([lookupFeatureFlags], {
   ruleTimeoutMs: 500,
-  onError: () => new Response('Service unavailable', { status: 503 }),
-})
+  onError: () => new Response("Service unavailable", { status: 503 }),
+});
 ```
 
 [examples/06](../examples/06-error-recovery.ts) has the complete file. See [Security: Error recovery](security.md#error-recovery) before you return `next()` from `onError`.
@@ -199,18 +190,18 @@ Export each concern as a factory, and let the app decide the order.
 // lib/proxy/locale.ts
 export function createLocaleRule(locales: readonly string[], fallback: string) {
   return defineHandler({
-    name: 'locale',
+    name: "locale",
     handler: (request) => {
-      const first = request.nextUrl.pathname.split('/')[1] ?? ''
-      if (locales.includes(first)) return next()
-      return next({ headers: { 'content-language': fallback } })
+      const first = request.nextUrl.pathname.split("/")[1] ?? "";
+      if (locales.includes(first)) return next();
+      return next({ headers: { "content-language": fallback } });
     },
-  })
+  });
 }
 
 // proxy.ts
-const locale = createLocaleRule(['en', 'pl'], 'en')
-export default chain([requestId, maintenance, [locale, path('/**')]])
+const locale = createLocaleRule(["en", "pl"], "en");
+export default chain([requestId, maintenance, [locale, path("/**")]]);
 ```
 
 Factories keep each integration testable on its own. Share one context type across the integrations so that they type-check against the same `createContext`. [examples/07](../examples/07-composing-rules.ts) shows the complete pattern.
@@ -221,9 +212,9 @@ Set `debug` to `'compact'`, `'detailed'`, or `'verbose'` for built-in request di
 
 ```ts
 export default chain(rules, {
-  debug: process.env.NODE_ENV === 'development',
+  debug: process.env.NODE_ENV === "development",
   onTrace: (trace) => myLogger.info(trace),
-})
+});
 ```
 
 Debugging defaults to off, even in development. Diagnostics omit query strings, request data, context values, and raw errors. Pathnames can still contain private data; set `tracePath: false` to omit them.

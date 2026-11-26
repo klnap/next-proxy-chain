@@ -12,7 +12,7 @@ import {
   path,
   createProxyContext,
   RuleTimeoutError,
-} from '@klnap/next-proxy-chain'
+} from "@klnap/next-proxy-chain";
 ```
 
 ## `chain`
@@ -20,23 +20,23 @@ import {
 Composes native Next.js proxy handlers, defineHandler() results, and scoped tuples into one handler.
 
 ```ts
-chain(entries)
-chain(entries, options)
-chain<TContext>(entries, { createContext, ...options })
+chain(entries);
+chain(entries, options);
+chain<TContext>(entries, { createContext, ...options });
 ```
 
 `entries` is an array. Each entry is one of:
 
-| Entry                                           | Receives                                                        | Notes                                                                                                                                  |
-| :---------------------------------------------- | :-------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------- |
-| A plain function `(request, event, context?)`   | `request`, `event`, and `context` as an optional third argument | The native Next.js signature. Next.js passes only two arguments; `chain()` adds the request context third.                             |
-| A `defineHandler()` result                      | `request`, `event`, and `context`                               | Use for named handlers, local rules, typed context, and per-handler settings.                                                         |
-| A tuple `[handler, scope]`                      | As above, only when the scope matches                           | `scope` is a path string, an array of paths, a RegExp, or an object `{ include?, exclude? }`. Include objects can also contain `host`. |
+| Entry                                         | Receives                                                        | Notes                                                                                                                                  |
+| :-------------------------------------------- | :-------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------- |
+| A plain function `(request, event, context?)` | `request`, `event`, and `context` as an optional third argument | The native Next.js signature. Next.js passes only two arguments; `chain()` adds the request context third.                             |
+| A `defineHandler()` result                    | `request`, `event`, and `context`                               | Use for named handlers, local rules, typed context, and per-handler settings.                                                          |
+| A tuple `[handler, scope]`                    | As above, only when the scope matches                           | `scope` is a path string, an array of paths, a RegExp, or an object `{ include?, exclude? }`. Include objects can also contain `host`. |
 
 `chain()` runs entries in array order. It returns a function that Next.js calls as `default` export of `proxy.ts` or `middleware.ts`.
 
 ```ts
-export default chain([intlProxy, [authProxy, '/dashboard/**'], securityProxy])
+export default chain([intlProxy, [authProxy, "/dashboard/**"], securityProxy]);
 ```
 
 A plain handler keeps the native Next.js signature. The optional third context argument is supplied only by `chain()`.
@@ -47,16 +47,16 @@ Defines a native-signature handler with an optional name, route rules, timeout, 
 
 ```ts
 const authHandler = defineHandler<Context>({
-  name: 'auth',
-  debug: 'verbose',
+  name: "auth",
+  debug: "verbose",
   timeout: 2000,
   rules: {
-    include: ['/dashboard/**', '/account/**'],
-    exclude: '/account/login',
+    include: ["/dashboard/**", "/account/**"],
+    exclude: "/account/login",
     when: (request, event, context) => Boolean(context.user),
   },
   handler: (request, event, context) => authenticate(request, event, context),
-})
+});
 ```
 
 The handler receives `(request, event, context)`. `rules.when` runs after include/exclude matching and before the handler. It uses the handler timeout or, if unset, the chain's `ruleTimeoutMs`.
@@ -73,9 +73,9 @@ Continues to the next rule.
 
 ```ts
 type NextOptions = {
-  request?: HeadersInit // request headers for downstream code
-  headers?: HeadersInit // response headers; set-cookie entries become cookies
-}
+  request?: HeadersInit; // request headers for downstream code
+  headers?: HeadersInit; // response headers; set-cookie entries become cookies
+};
 ```
 
 `request` values pass through `requestHeaderPolicy`. Header names in `headers` are merged according to `headerMergeStrategy`, and cookies according to `cookieMergeStrategy`.
@@ -144,8 +144,8 @@ Creates the default per-request context. You rarely call it directly. The defaul
 
 ```ts
 class RuleTimeoutError extends Error {
-  readonly ruleName: string
-  readonly timeoutMs: number
+  readonly ruleName: string;
+  readonly timeoutMs: number;
 }
 ```
 
@@ -206,8 +206,8 @@ type OnErrorHandler<TContext> = (
   err: unknown,
   ruleIndex: number,
   req: NextRequest,
-  ctx: TContext
-) => OnErrorResult | Promise<OnErrorResult>
+  ctx: TContext,
+) => OnErrorResult | Promise<OnErrorResult>;
 ```
 
 `ruleIndex` is the zero-based index of the rule that failed. `-1` means the error came from the engine itself rather than a rule's own code: after all rules ran, or while reading a rule's return value.
@@ -224,10 +224,10 @@ Throwing inside `onError` also gives a 500.
 
 ```ts
 interface ChainLogger {
-  debug(metaOrMsg: unknown, maybeMsg?: string): void
-  info(metaOrMsg: unknown, maybeMsg?: string): void
-  warn(metaOrMsg: unknown, maybeMsg?: string): void
-  error(metaOrMsg: unknown, maybeMsg?: string): void
+  debug(metaOrMsg: unknown, maybeMsg?: string): void;
+  info(metaOrMsg: unknown, maybeMsg?: string): void;
+  warn(metaOrMsg: unknown, maybeMsg?: string): void;
+  error(metaOrMsg: unknown, maybeMsg?: string): void;
 }
 ```
 
@@ -235,19 +235,19 @@ Any logger with these four methods works, including pino and winston.
 
 ## Types
 
-| Type                                         | Meaning                                                                                   |
-| :------------------------------------------- | :---------------------------------------------------------------------------------------- |
-| `ChainOptions<TContext>`                     | Options accepted by `chain()`.                                                            |
-| `ChainEntry<TContext>`                       | A native handler, defined handler, or scoped tuple.                                       |
-| `DefinedHandler<TContext>`                   | The return type of `defineHandler()`.                                                      |
-| `ProxyContext`                               | `Map<string, unknown>`.                                                                   |
-| `PathMatcher`                                | `string \| RegExp`.                                                                       |
-| `HostMatcher`                                | `string \| RegExp \| (string \| RegExp)[]`.                                               |
-| `NextOptions`                                | The argument to `next()`.                                                                 |
-| `NextResult`                                 | The return type of `next()`.                                                              |
-| `MergeStrategy`                              | `'last-write-wins' \| 'first-write-wins' \| MergeFn`.                                     |
-| `RequestHeaderPolicy`                        | `{ blocked?, allowed? }`.                                                                 |
-| `OnErrorHandler`, `OnErrorResult`            | Types for `onError`.                                                                      |
-| `ChainLogger`                                | The logger interface.                                                                     |
-| `DebugLevel`                                 | `false \| true \| 'compact' \| 'detailed' \| 'verbose'`.                                  |
-| `ChainTrace`, `ChainOutcome`, `HandlerTrace` | Sanitized structured request diagnostics.                                                 |
+| Type                                         | Meaning                                                  |
+| :------------------------------------------- | :------------------------------------------------------- |
+| `ChainOptions<TContext>`                     | Options accepted by `chain()`.                           |
+| `ChainEntry<TContext>`                       | A native handler, defined handler, or scoped tuple.      |
+| `DefinedHandler<TContext>`                   | The return type of `defineHandler()`.                    |
+| `ProxyContext`                               | `Map<string, unknown>`.                                  |
+| `PathMatcher`                                | `string \| RegExp`.                                      |
+| `HostMatcher`                                | `string \| RegExp \| (string \| RegExp)[]`.              |
+| `NextOptions`                                | The argument to `next()`.                                |
+| `NextResult`                                 | The return type of `next()`.                             |
+| `MergeStrategy`                              | `'last-write-wins' \| 'first-write-wins' \| MergeFn`.    |
+| `RequestHeaderPolicy`                        | `{ blocked?, allowed? }`.                                |
+| `OnErrorHandler`, `OnErrorResult`            | Types for `onError`.                                     |
+| `ChainLogger`                                | The logger interface.                                    |
+| `DebugLevel`                                 | `false \| true \| 'compact' \| 'detailed' \| 'verbose'`. |
+| `ChainTrace`, `ChainOutcome`, `HandlerTrace` | Sanitized structured request diagnostics.                |

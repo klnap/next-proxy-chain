@@ -140,19 +140,21 @@ jobs:
           for (const file of ["package/dist/index.cjs", "package/dist/index.d.cts", "package/dist/index.d.ts", "package/dist/index.js"]) {
             if (!files.includes(file)) throw new Error(`Missing tarball file: ${file}`);
           }
-          const consumer = path.join(process.env.RUNNER_TEMP, "release-consumer");
-          execFileSync("mkdir", ["-p", consumer]);
-          execFileSync("npm", ["install", "--prefix", consumer, "--ignore-scripts", "--no-audit", "--no-fund", tarball, "next@15.5.29", "react@18.2.0", "react-dom@18.2.0", "@types/node@20"], { stdio: "inherit" });
-          const name = JSON.stringify(pkg.name);
-          const fs = await import("node:fs/promises");
-          await fs.writeFile(path.join(consumer, "consumer.mts"), `import * as api from ${name};\nimport type { ChainEntry, ChainLogger, ChainOptions, ChainOutcome, ChainScope, ChainTrace, DebugLevel, DefinedHandler, HandlerDebugOptions, HandlerDiagnosticDetails, HandlerTrace, HandlerWhen, HostMatcher, MergeStrategy, NativeProxy, NextOptions, NextResult, OnErrorHandler, OnErrorResult, PathMatcher, ProxyContext, RequestHeaderPolicy, SkipReason, TraceCallback } from ${name};\nconst result = api.next();\nif (!api.isNextResult(result)) throw new Error("next() must return a continuation result");\nconst proxy = api.chain([api.defineHandler({ name: "release-check", handler: () => undefined })]);\nvoid proxy;\ntype PublicTypes = [ChainEntry, ChainLogger, ChainOptions, ChainOutcome, ChainScope, ChainTrace, DebugLevel, DefinedHandler, HandlerDebugOptions, HandlerDiagnosticDetails, HandlerTrace, HandlerWhen, HostMatcher, MergeStrategy, NativeProxy, NextOptions, NextResult, OnErrorHandler, OnErrorResult, PathMatcher, ProxyContext, RequestHeaderPolicy, SkipReason, TraceCallback];\nvoid (0 as unknown as PublicTypes);\n`);
-          await fs.writeFile(path.join(consumer, "consumer.cts"), `import api = require(${name});\nimport type { ChainEntry, ChainLogger, ChainOptions, ChainOutcome, ChainScope, ChainTrace, DebugLevel, DefinedHandler, HandlerDebugOptions, HandlerDiagnosticDetails, HandlerTrace, HandlerWhen, HostMatcher, MergeStrategy, NativeProxy, NextOptions, NextResult, OnErrorHandler, OnErrorResult, PathMatcher, ProxyContext, RequestHeaderPolicy, SkipReason, TraceCallback } from ${name};\nconst result = api.next();\nif (!api.isNextResult(result)) throw new Error("next() must return a continuation result");\nconst proxy = api.chain([api.defineHandler({ name: "release-check", handler: () => undefined })]);\nvoid proxy;\ntype PublicTypes = [ChainEntry, ChainLogger, ChainOptions, ChainOutcome, ChainScope, ChainTrace, DebugLevel, DefinedHandler, HandlerDebugOptions, HandlerDiagnosticDetails, HandlerTrace, HandlerWhen, HostMatcher, MergeStrategy, NativeProxy, NextOptions, NextResult, OnErrorHandler, OnErrorResult, PathMatcher, ProxyContext, RequestHeaderPolicy, SkipReason, TraceCallback];\nvoid (0 as unknown as PublicTypes);\n`);
-          await fs.writeFile(path.join(consumer, "consumer.mjs"), `import assert from "node:assert/strict";\nimport * as api from ${name};\nassert.deepEqual(Object.keys(api).sort(), ["RuleTimeoutError", "chain", "createProxyContext", "defineHandler", "host", "isNextResult", "next", "path"]);\nassert.equal(api.isNextResult(api.next()), true);\nassert.equal(typeof api.defineHandler, "function");\nassert.equal("defineProxy" in api, false);\nassert.equal("proxyChain" in api, false);\n`);
-          await fs.writeFile(path.join(consumer, "consumer.cjs"), `const assert = require("node:assert/strict");\nconst api = require(${name});\nassert.deepEqual(Object.keys(api).sort(), ["RuleTimeoutError", "chain", "createProxyContext", "defineHandler", "host", "isNextResult", "next", "path"]);\nassert.equal(api.isNextResult(api.next()), true);\nassert.equal(typeof api.defineHandler, "function");\nassert.equal("defineProxy" in api, false);\nassert.equal("proxyChain" in api, false);\n`);
-          await fs.writeFile(path.join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", strict: true, noEmit: true, skipLibCheck: true, types: [] }, include: ["consumer.mts", "consumer.cts"] }));
-          execFileSync(path.resolve("node_modules/.bin/tsc"), ["--project", path.join(consumer, "tsconfig.json")], { stdio: "inherit" });
-          execFileSync("bun", [path.join(consumer, "consumer.mjs")], { cwd: consumer, stdio: "inherit" });
-          execFileSync("node", [path.join(consumer, "consumer.cjs")], { cwd: consumer, stdio: "inherit" });
+           const consumer = path.join(process.env.RUNNER_TEMP, "release-consumer");
+           execFileSync("mkdir", ["-p", consumer]);
+           const fs = await import("node:fs/promises");
+           await fs.cp("tests/consumer", consumer, { recursive: true });
+           execFileSync("npm", ["install", "--prefix", consumer, "--ignore-scripts", "--no-audit", "--no-fund", tarball, "next@15.5.29", "react@18.2.0", "react-dom@18.2.0", "@types/node@20", "@types/react@18", "@types/react-dom@18"], { stdio: "inherit" });
+           execFileSync(path.resolve("node_modules/.bin/tsc"), ["--project", path.join(consumer, "tsconfig.json")], { stdio: "inherit" });
+           execFileSync("bun", [path.join(consumer, "consumer.mjs")], { cwd: consumer, stdio: "inherit" });
+           execFileSync("node", [path.join(consumer, "consumer.cjs")], { cwd: consumer, stdio: "inherit" });
+           const consumer16 = path.join(process.env.RUNNER_TEMP, "release-consumer-next16");
+           execFileSync("mkdir", ["-p", consumer16]);
+           await fs.cp("tests/consumer", consumer16, { recursive: true });
+           execFileSync("npm", ["install", "--prefix", consumer16, "--ignore-scripts", "--no-audit", "--no-fund", tarball, "next@16.3.2", "react@19.2.8", "react-dom@19.2.8", "@types/node@20", "@types/react@19", "@types/react-dom@19"], { stdio: "inherit" });
+           execFileSync(path.resolve("node_modules/.bin/tsc"), ["--project", path.join(consumer16, "tsconfig.json")], { stdio: "inherit" });
+           execFileSync("node", [path.join(consumer16, "consumer.mjs")], { cwd: consumer16, stdio: "inherit" });
+           execFileSync("node", [path.join(consumer16, "consumer.cjs")], { cwd: consumer16, stdio: "inherit" });
           console.log(`Verified ${release.name}@${release.version} from source ${process.env.GITHUB_SHA}.`);
           NODE
 

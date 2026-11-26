@@ -82,22 +82,23 @@ jobs:
           CONSUMER_DIR: ${{ runner.temp }}/consumer
         run: | # zizmor: ignore[adhoc-packages] install the exact local tarball and pinned peer dependencies; lifecycle scripts are disabled
           mkdir -p "$CONSUMER_DIR"
-          npm install --prefix "$CONSUMER_DIR" --ignore-scripts --no-audit --no-fund "$TARBALL" next@15.5.29 react@18.2.0 react-dom@18.2.0 @types/node@20
-          PACKAGE_NAME="$(node -p 'require("./package.json").name')"
-          PACKAGE_NAME="$PACKAGE_NAME" CONSUMER_DIR="$CONSUMER_DIR" node <<'NODE'
-          const fs = require("node:fs");
-          const name = JSON.stringify(process.env.PACKAGE_NAME);
-          const dir = process.env.CONSUMER_DIR;
-          fs.writeFileSync(`${dir}/consumer.mts`, `import * as api from ${name};\nimport type { ChainEntry, ChainLogger, ChainOutcome, ChainScope, ChainTrace, DebugLevel, DefinedProxy, Entry, HandlerDebugOptions, HandlerDiagnosticDetails, HandlerTrace, HandlerWhen, HostMatcher, MergeStrategy, NativeProxy, NextOptions, NextResult, OnErrorHandler, OnErrorResult, PathMatcher, ProxyChainOptions, ProxyContext, ProxyFn, ProxyPathFilter, ProxyRule, RequestHeaderPolicy, SkipReason, TraceCallback } from ${name};\nconst result = api.next();\nif (!api.isNextResult(result)) throw new Error("next() must return a continuation result");\nconst proxy = api.chain([api.defineHandler({ name: "release-check", handler: () => undefined })]);\nvoid proxy;\ntype PublicTypes = [ChainEntry, ChainLogger, ChainOutcome, ChainScope, ChainTrace, DebugLevel, DefinedProxy, Entry, HandlerDebugOptions, HandlerDiagnosticDetails, HandlerTrace, HandlerWhen, HostMatcher, MergeStrategy, NativeProxy, NextOptions, NextResult, OnErrorHandler, OnErrorResult, PathMatcher, ProxyChainOptions, ProxyContext, ProxyFn, ProxyPathFilter, ProxyRule, RequestHeaderPolicy, SkipReason, TraceCallback];\nvoid (0 as unknown as PublicTypes);\n`);
-          fs.writeFileSync(`${dir}/consumer.cts`, `import api = require(${name});\nimport type { ChainEntry, ChainLogger, ChainOutcome, ChainScope, ChainTrace, DebugLevel, DefinedProxy, Entry, HandlerDebugOptions, HandlerDiagnosticDetails, HandlerTrace, HandlerWhen, HostMatcher, MergeStrategy, NativeProxy, NextOptions, NextResult, OnErrorHandler, OnErrorResult, PathMatcher, ProxyChainOptions, ProxyContext, ProxyFn, ProxyPathFilter, ProxyRule, RequestHeaderPolicy, SkipReason, TraceCallback } from ${name};\nconst result = api.next();\nif (!api.isNextResult(result)) throw new Error("next() must return a continuation result");\nconst proxy = api.chain([api.defineHandler({ name: "release-check", handler: () => undefined })]);\nvoid proxy;\ntype PublicTypes = [ChainEntry, ChainLogger, ChainOutcome, ChainScope, ChainTrace, DebugLevel, DefinedProxy, Entry, HandlerDebugOptions, HandlerDiagnosticDetails, HandlerTrace, HandlerWhen, HostMatcher, MergeStrategy, NativeProxy, NextOptions, NextResult, OnErrorHandler, OnErrorResult, PathMatcher, ProxyChainOptions, ProxyContext, ProxyFn, ProxyPathFilter, ProxyRule, RequestHeaderPolicy, SkipReason, TraceCallback];\nvoid (0 as unknown as PublicTypes);\n`);
-          fs.writeFileSync(`${dir}/consumer.mjs`, `import assert from "node:assert/strict";\nimport * as api from ${name};\nassert.deepEqual(Object.keys(api).sort(), ["RuleTimeoutError", "chain", "createProxyContext", "defineHandler", "defineProxy", "host", "isNextResult", "next", "path", "proxyChain"]);\nassert.equal(api.isNextResult(api.next()), true);\nassert.equal(typeof api.defineHandler, "function");\n`);
-          fs.writeFileSync(`${dir}/consumer.cjs`, `const assert = require("node:assert/strict");\nconst api = require(${name});\nassert.deepEqual(Object.keys(api).sort(), ["RuleTimeoutError", "chain", "createProxyContext", "defineHandler", "defineProxy", "host", "isNextResult", "next", "path", "proxyChain"]);\nassert.equal(api.isNextResult(api.next()), true);\nassert.equal(typeof api.defineHandler, "function");\n`);
-          fs.writeFileSync(`${dir}/tsconfig.json`, JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", strict: true, noEmit: true, skipLibCheck: true, types: [] }, include: ["consumer.mts", "consumer.cts"] }));
-          NODE
+          npm install --prefix "$CONSUMER_DIR" --ignore-scripts --no-audit --no-fund "$TARBALL" next@15.5.29 react@18.2.0 react-dom@18.2.0 @types/node@20 @types/react@18 @types/react-dom@18
+          cp -R "$GITHUB_WORKSPACE/tests/consumer/." "$CONSUMER_DIR/"
           "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --project "$CONSUMER_DIR/tsconfig.json"
           cd "$CONSUMER_DIR"
           bun consumer.mjs
           node consumer.cjs
+
+      - name: Test the tarball with Next.js 16
+        env:
+          TARBALL: ${{ steps.pack.outputs.path }}
+          CONSUMER_DIR: ${{ runner.temp }}/consumer-next16
+        run: | # zizmor: ignore[adhoc-packages] installs the exact local tarball and pinned peer dependencies; lifecycle scripts are disabled
+          mkdir -p "$CONSUMER_DIR"
+          npm install --prefix "$CONSUMER_DIR" --ignore-scripts --no-audit --no-fund "$TARBALL" next@16.3.2 react@19.2.8 react-dom@19.2.8 @types/node@20 @types/react@19 @types/react-dom@19
+          cp -R "$GITHUB_WORKSPACE/tests/consumer/." "$CONSUMER_DIR/"
+          "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --project "$CONSUMER_DIR/tsconfig.json"
+          (cd "$CONSUMER_DIR" && node consumer.mjs && node consumer.cjs)
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

@@ -3,9 +3,9 @@
 Composable proxy and middleware for Next.js.
 
 ```ts
-import { chain } from '@klnap/next-proxy-chain'
+import { chain } from "@klnap/next-proxy-chain";
 
-export default chain([intlProxy, [authProxy, '/dashboard/**'], securityProxy])
+export default chain([intlProxy, [authProxy, "/dashboard/**"], securityProxy]);
 ```
 
 `intlProxy`, `authProxy` and `securityProxy` are ordinary Next.js proxy functions: `(request, event) => NextResponse | Response | undefined`. You do not wrap them, and you do not change what they return.
@@ -25,15 +25,15 @@ bun add @klnap/next-proxy-chain
 Pass handlers in the order they should run. Each one receives the native `(request, event)` arguments, so `event.waitUntil()` works.
 
 ```ts
-import { chain } from '@klnap/next-proxy-chain'
-import { NextResponse } from 'next/server'
+import { chain } from "@klnap/next-proxy-chain";
+import { NextResponse } from "next/server";
 
 function analytics(request, event) {
-  event.waitUntil(sendPageView(request.nextUrl.pathname))
-  return NextResponse.next()
+  event.waitUntil(sendPageView(request.nextUrl.pathname));
+  return NextResponse.next();
 }
 
-export default chain([analytics, intlProxy, securityProxy])
+export default chain([analytics, intlProxy, securityProxy]);
 ```
 
 A handler continues the chain by returning `undefined` or `NextResponse.next()`. A handler stops the chain by returning a `Response`, `NextResponse.redirect()`, `NextResponse.json()`, or `Response.redirect()`. The rest of this page explains each case.
@@ -45,17 +45,17 @@ Wrap a handler in a tuple to run it only for some paths or hosts:
 ```ts
 export default chain([
   // Only /dashboard and its children.
-  [authProxy, '/dashboard/**'],
+  [authProxy, "/dashboard/**"],
 
   // Everything except /login.
-  [adminProxy, { exclude: '/admin/login' }],
+  [adminProxy, { exclude: "/admin/login" }],
 
   // RegExp works too.
   [privateProxy, { exclude: /^\/public(\/.*)?$/ }],
 
   // Several patterns and a host.
-  [billingProxy, { include: { host: 'app.example.com', path: ['/billing/**', '/invoices/**'] } }],
-])
+  [billingProxy, { include: { host: "app.example.com", path: ["/billing/**", "/invoices/**"] } }],
+]);
 ```
 
 Path patterns:
@@ -72,32 +72,32 @@ Segments are compared whole. `/tenant` does not match `/tenant-other`. A pattern
 The context is a `Map` that exists for one request. A handler stores a value with `ctx.set`, and a later handler reads it with `ctx.get`:
 
 ```ts
-import { chain, defineHandler, next } from '@klnap/next-proxy-chain'
-import { NextResponse } from 'next/server'
+import { chain, defineHandler, next } from "@klnap/next-proxy-chain";
+import { NextResponse } from "next/server";
 
-type Session = { user: string }
+type Session = { user: string };
 
 // Sets the value.
 const readSession = defineHandler({
-  name: 'read-session',
+  name: "read-session",
   handler: (request, _event, context) => {
-    const user = request.cookies.get('user')?.value
-    if (user) context.set('session', { user })
-    return next()
+    const user = request.cookies.get("user")?.value;
+    if (user) context.set("session", { user });
+    return next();
   },
-})
+});
 
 // Reads the value.
 const requireUser = defineHandler({
-  name: 'require-user',
+  name: "require-user",
   handler: (request, _event, context) => {
-    const session = context.get('session') as Session | undefined
-    if (!session) return NextResponse.redirect(new URL('/login', request.url))
-    return next()
+    const session = context.get("session") as Session | undefined;
+    if (!session) return NextResponse.redirect(new URL("/login", request.url));
+    return next();
   },
-})
+});
 
-export default chain([readSession, [requireUser, '/dashboard/**']])
+export default chain([readSession, [requireUser, "/dashboard/**"]]);
 ```
 
 - Each request has its own map. Values never leak between requests.
@@ -110,13 +110,13 @@ export default chain([readSession, [requireUser, '/dashboard/**']])
 `createContext` creates the context object yourself. Use it when every rule should start with the same typed object, such as a request ID:
 
 ```ts
-type Ctx = { requestId: string }
+type Ctx = { requestId: string };
 
 export default chain([requestLog, authProxy], {
   createContext: (req): Ctx => ({
-    requestId: req.headers.get('x-request-id') ?? crypto.randomUUID(),
+    requestId: req.headers.get("x-request-id") ?? crypto.randomUUID(),
   }),
-})
+});
 ```
 
 Handlers declared with `defineHandler<Ctx>` need a matching `createContext`. TypeScript reports an error otherwise.
@@ -142,7 +142,7 @@ Headers and cookies that earlier handlers set are kept on the response that stop
 
 | Option                                       | Purpose                                                                          |
 | :------------------------------------------- | :------------------------------------------------------------------------------- |
-| `createContext`                              | Creates the context for each request. Required for typed handlers.              |
+| `createContext`                              | Creates the context for each request. Required for typed handlers.               |
 | `onError`                                    | Returns a `Response` to stop with, `next()` to continue, or nothing for a `500`. |
 | `ruleTimeoutMs`                              | Time limit per handler. `0` (default) disables it.                               |
 | `headerMergeStrategy`, `cookieMergeStrategy` | How conflicting response headers and cookies are resolved.                       |
@@ -162,15 +162,15 @@ Enable debugging to see how a request moves through the chain, which handlers ru
 ```ts
 export default chain(handlers, {
   debug: true,
-})
+});
 ```
 
 Debug output is off by default, including in development. Set it explicitly:
 
 ```ts
 export default chain(handlers, {
-  debug: process.env.NODE_ENV === 'development',
-})
+  debug: process.env.NODE_ENV === "development",
+});
 ```
 
 `debug` accepts `false`, `true`, `'compact'`, `'detailed'`, or `'verbose'`. `true` means `'detailed'`. Compact prints one request summary; detailed adds handler outcomes; verbose adds matching rules and effective timeouts.
@@ -178,22 +178,22 @@ export default chain(handlers, {
 Use `defineHandler()` for named handlers with local settings:
 
 ```ts
-import { chain, defineHandler } from '@klnap/next-proxy-chain'
+import { chain, defineHandler } from "@klnap/next-proxy-chain";
 
-type Context = { user: string }
+type Context = { user: string };
 
 const authHandler = defineHandler<Context>({
-  name: 'auth',
-  debug: 'verbose',
+  name: "auth",
+  debug: "verbose",
   timeout: 2000,
   rules: {
-    include: ['/dashboard/**', '/account/**'],
-    exclude: '/account/login',
+    include: ["/dashboard/**", "/account/**"],
+    exclude: "/account/login",
   },
   handler: (request, event, context) => authenticate(request, event, context),
-})
+});
 
-export default chain([authHandler], { debug: 'compact' })
+export default chain([authHandler], { debug: "compact" });
 ```
 
 Handler settings override chain settings; chain settings override library defaults. An explicit `debug: false` hides that handler's built-in detail. It does not affect execution or `onTrace`. A handler-level detail override can enable output while global debugging is off.
@@ -257,7 +257,7 @@ Send traces to any logger without adding a logging dependency:
 ```ts
 export default chain(handlers, {
   onTrace: (trace) => logger.info(trace),
-})
+});
 ```
 
 `onTrace` runs once after each request. The chain does not await it. Synchronous failures and rejected promises are ignored, so logging cannot change the response. The `logger` option replaces the built-in terminal sink; it receives one completed formatted block through `info`. It does not receive every handler event.
@@ -272,15 +272,15 @@ Run `bun run bench/diagnostics.bench.ts` to compare disabled diagnostics, output
 
 Sample run: Bun 1.4.4, Node.js 26.13.1, Linux x86_64 under WSL2, Intel Core i3-10105, three handlers, 20,000 measured requests after 1,000 warmups:
 
-| Case | µs/request |
-| :--- | ---: |
-| Debug disabled | 6.61 |
-| Compact | 11.46 |
-| Detailed | 14.79 |
-| Verbose | 20.39 |
-| Structured trace | 10.29 |
-| Detailed, 32 concurrent | 16.45 |
-| Terminal output, compact (10 requests) | 39.63 |
+| Case                                   | µs/request |
+| :------------------------------------- | ---------: |
+| Debug disabled                         |       6.61 |
+| Compact                                |      11.46 |
+| Detailed                               |      14.79 |
+| Verbose                                |      20.39 |
+| Structured trace                       |      10.29 |
+| Detailed, 32 concurrent                |      16.45 |
+| Terminal output, compact (10 requests) |      39.63 |
 
 Formatting a collected trace alone took 0.59 µs for compact, 3.19 µs for detailed, and 3.54 µs for verbose.
 

@@ -21,13 +21,13 @@ Both kinds run in array order, follow the same continuation rules, and can be sc
 
 ## Continue or stop
 
-| A rule returns | Effect |
-| :--- | :--- |
-| `next()` or nothing | Continue to the next rule. |
-| `next({ request, headers })` | Continue. Request headers are passed on, response headers are queued. |
-| `NextResponse.rewrite(url)` | Continue. The rewrite applies at the end, unless a later rule stops. |
-| `NextResponse.next()` | Continue. Its request-header overrides and cookies are carried forward. |
-| `Response`, `NextResponse.redirect()`, `NextResponse.json()` | Stop and return that response. |
+| A rule returns                                               | Effect                                                                  |
+| :----------------------------------------------------------- | :---------------------------------------------------------------------- |
+| `next()` or nothing                                          | Continue to the next rule.                                              |
+| `next({ request, headers })`                                 | Continue. Request headers are passed on, response headers are queued.   |
+| `NextResponse.rewrite(url)`                                  | Continue. The rewrite applies at the end, unless a later rule stops.    |
+| `NextResponse.next()`                                        | Continue. Its request-header overrides and cookies are carried forward. |
+| `Response`, `NextResponse.redirect()`, `NextResponse.json()` | Stop and return that response.                                          |
 
 Stopping is immediate. Rules after a stopping rule never run, so their headers, cookies, and checks are not applied. This matters most for security headers. See [Ordering](#ordering-and-early-responses).
 
@@ -36,7 +36,7 @@ Stopping is immediate. Rules after a stopping rule never run, so their headers, 
 A rule can take an `include` and an `exclude`:
 
 ```ts
-[authHandler, { include: path('/admin/**'), exclude: path('/admin/login') }]
+[authHandler, { include: path("/admin/**"), exclude: path("/admin/login") }];
 ```
 
 - No `include`: the rule runs for every request.
@@ -76,12 +76,12 @@ Each request gets its own context object, created before the first rule runs. Ru
 
 ```ts
 const setUser = defineHandler({
-  name: 'set-user',
+  name: "set-user",
   handler: (_request, _event, context) => {
-    context.set('userId', 'usr_123')
-    return next()
+    context.set("userId", "usr_123");
+    return next();
   },
-})
+});
 ```
 
 The default context is a `Map<string, unknown>`. For a typed object, pass `createContext`. See the [typed context guide](guides.md#share-typed-state-between-rules).
@@ -117,13 +117,13 @@ See [examples/01](../examples/01-quick-start.ts) for the first pattern.
 
 A rule can throw. What happens next depends on `onError`:
 
-| Situation | Result |
-| :--- | :--- |
-| Rule throws, no `onError` | `500 Internal Server Error`. Later rules do not run. |
-| `onError` returns a `Response` | The chain stops with that response. Earlier headers and cookies are still merged. |
-| `onError` returns `next()` or `NextResponse.next()` | The chain continues with the next rule. |
-| `onError` returns nothing | `500 Internal Server Error`. |
-| `onError` throws | `500 Internal Server Error`. |
+| Situation                                           | Result                                                                            |
+| :-------------------------------------------------- | :-------------------------------------------------------------------------------- |
+| Rule throws, no `onError`                           | `500 Internal Server Error`. Later rules do not run.                              |
+| `onError` returns a `Response`                      | The chain stops with that response. Earlier headers and cookies are still merged. |
+| `onError` returns `next()` or `NextResponse.next()` | The chain continues with the next rule.                                           |
+| `onError` returns nothing                           | `500 Internal Server Error`.                                                      |
+| `onError` throws                                    | `500 Internal Server Error`.                                                      |
 
 `onError` receives the error and the index of the rule that threw. Index `-1` means the error came from the engine itself, after all rules ran or while reading a rule's return value. No rule is left to continue to, so only a `Response` is honored there. `next()` or `NextResponse.next()` returns `500`.
 

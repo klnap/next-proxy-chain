@@ -14,13 +14,13 @@ The library runs your auth check. It does not perform one. A cookie being presen
 
 ```ts
 const requireSession = defineHandler({
-  name: 'require-session',
+  name: "require-session",
   handler: async (request) => {
-    const session = await verifySession(request.cookies.get('session')?.value)
-    if (!session) return NextResponse.redirect(new URL('/login', request.url))
-    return next()
+    const session = await verifySession(request.cookies.get("session")?.value);
+    if (!session) return NextResponse.redirect(new URL("/login", request.url));
+    return next();
   },
-})
+});
 ```
 
 `verifySession` is your code. Keep in mind that Proxy runs before the route, so a route handler should still check authorization for the data it returns.

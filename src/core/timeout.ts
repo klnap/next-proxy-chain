@@ -1,12 +1,12 @@
 export class RuleTimeoutError extends Error {
-  readonly ruleName: string
-  readonly timeoutMs: number
+  readonly ruleName: string;
+  readonly timeoutMs: number;
 
   constructor(ruleName: string, timeoutMs: number) {
-    super(`[proxy-chain] ${ruleName} timed out after ${timeoutMs}ms`)
-    this.name = 'RuleTimeoutError'
-    this.ruleName = ruleName
-    this.timeoutMs = timeoutMs
+    super(`[proxy-chain] ${ruleName} timed out after ${timeoutMs}ms`);
+    this.name = "RuleTimeoutError";
+    this.ruleName = ruleName;
+    this.timeoutMs = timeoutMs;
   }
 }
 
@@ -14,8 +14,8 @@ export class RuleTimeoutError extends Error {
 export function assertFiniteRuleTimeoutMs(ruleTimeoutMs: number | undefined): void {
   if (ruleTimeoutMs != null && (!Number.isFinite(ruleTimeoutMs) || ruleTimeoutMs < 0)) {
     throw new RangeError(
-      `[proxy-chain] ruleTimeoutMs must be a finite number >= 0 (0 disables), got ${ruleTimeoutMs}`
-    )
+      `[proxy-chain] ruleTimeoutMs must be a finite number >= 0 (0 disables), got ${ruleTimeoutMs}`,
+    );
   }
 }
 
@@ -25,21 +25,21 @@ export function assertFiniteRuleTimeoutMs(ruleTimeoutMs: number | undefined): vo
 export async function withRuleTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number | undefined,
-  ruleName: string
+  ruleName: string,
 ): Promise<T> {
-  assertFiniteRuleTimeoutMs(timeoutMs)
-  if (timeoutMs == null || timeoutMs <= 0) return promise
+  assertFiniteRuleTimeoutMs(timeoutMs);
+  if (timeoutMs == null || timeoutMs <= 0) return promise;
 
-  let timer: ReturnType<typeof setTimeout> | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new RuleTimeoutError(ruleName, timeoutMs)), timeoutMs)
-  })
+    timer = setTimeout(() => reject(new RuleTimeoutError(ruleName, timeoutMs)), timeoutMs);
+  });
 
   try {
-    return await Promise.race([promise, timeout])
+    return await Promise.race([promise, timeout]);
   } finally {
-    if (timer !== undefined) clearTimeout(timer)
+    if (timer !== undefined) clearTimeout(timer);
     // Timeout does not cancel the rule. Swallow a later rejection so it is not unhandled.
-    void promise.catch(() => {})
+    void promise.catch(() => {});
   }
 }

@@ -1,9 +1,9 @@
-const MAX_TEXT_LENGTH = 160
+const MAX_TEXT_LENGTH = 160;
 
 export function safeDiagnosticText(value: string, limit = MAX_TEXT_LENGTH): string {
-  let output = ''
+  let output = "";
   for (const char of value) {
-    const code = char.codePointAt(0)!
+    const code = char.codePointAt(0)!;
     if (
       code === 0x1b ||
       code < 0x20 ||
@@ -16,21 +16,21 @@ export function safeDiagnosticText(value: string, limit = MAX_TEXT_LENGTH): stri
       (code >= 0x2060 && code <= 0x206f) ||
       code === 0xfeff
     ) {
-      output += '�'
+      output += "�";
     } else {
-      output += char
+      output += char;
     }
-    if (output.length >= limit) return `${output.slice(0, limit)}…`
+    if (output.length >= limit) return `${output.slice(0, limit)}…`;
   }
-  return output
+  return output;
 }
 
 export function safeDestination(value: string | null): string | undefined {
-  if (!value) return undefined
+  if (!value) return undefined;
   try {
-    const url = new URL(value, 'http://proxy-chain.invalid')
-    return safeDiagnosticText(`${url.pathname}${url.search ? '?[query]' : ''}`)
+    const url = new URL(value, "http://proxy-chain.invalid");
+    return safeDiagnosticText(`${url.pathname}${url.search ? "?[query]" : ""}`);
   } catch {
-    return safeDiagnosticText(value.split(/[?#]/, 1)[0] ?? '')
+    return safeDiagnosticText(value.split(/[?#]/, 1)[0] ?? "");
   }
 }

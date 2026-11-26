@@ -3,7 +3,12 @@ import { NextRequest, NextResponse } from "next/server.js";
 
 import { isNextResult } from "./actions";
 import { createApplicationState, createHandlerContext, createRequestMetadata } from "./context";
-import { cookieItemsFromHeaders, headersDiffer, responseHeaderItems } from "./headers";
+import {
+  cookieItemsFromHeaders,
+  headersDiffer,
+  isRequestHeaderAllowed,
+  responseHeaderItems,
+} from "./headers";
 import { createConsoleLogger } from "./logger";
 import { formatTrace, shouldUseColor, supportsUnicode } from "./diagnostics/formatter";
 import { safeDestination, safeDiagnosticText } from "./diagnostics/sanitize";
@@ -146,18 +151,29 @@ function isNextResponse(value: unknown): boolean {
 }
 
 /** Terminal responses must not carry Next.js request-override headers into routing. */
-function stripRoutingOverrides(res: Response): void {
+function stripRoutingOverrides(res: Response): Response {
   // A plain Response is not a Next.js continuation, so every x-middleware-* control header goes.
   const plain = !(res instanceof NextResponse);
-  for (const key of [...res.headers.keys()]) {
+  const keys = [...res.headers.keys()];
+  const remove = keys.filter((key) => {
     const lower = key.toLowerCase();
-    if (
+    return (
       lower === "x-middleware-override-headers" ||
       lower.startsWith("x-middleware-request-") ||
       (plain && (lower === "x-middleware-next" || lower === "x-middleware-rewrite"))
-    ) {
-      res.headers.delete(key);
-    }
+    );
+  });
+  if (!remove.length) return res;
+  try {
+    for (const key of remove) res.headers.delete(key);
+    return res;
+  } catch {
+    const headers = new Headers(res.headers);
+    for (const key of remove) headers.delete(key);
+    const init = { headers, status: res.status, statusText: res.statusText };
+    return res instanceof NextResponse
+      ? new NextResponse(res.body, init)
+      : new Response(res.body, init);
   }
 }
 
@@ -254,19 +270,24 @@ export function executeChain<TContext extends object = object>(
       }
       const globalLevel = normalizeDebugLevel(debugLevel);
       if (globalLevel !== false || hasHandlerDebug) {
-        const visible = diagnostics.filter((_handler, index) => {
-          const local = rules[index]?.debug;
-          if (local === false) return false;
-          if (local === "compact") return globalLevel === "compact";
-          if (local != null) return true;
-          return globalLevel !== false && !(globalLevel === "compact" && hasDetailedHandlerDebug);
-        });
         const level =
           (globalLevel === "compact" || globalLevel === false) && hasDetailedHandlerDebug
             ? "detailed"
             : globalLevel === false
               ? "compact"
               : globalLevel;
+        const visible =
+          level === "compact"
+            ? diagnostics
+            : diagnostics.filter((_handler, index) => {
+                const local = rules[index]?.debug;
+                if (local === false) return false;
+                if (local === "compact") return globalLevel === "compact";
+                if (local != null) return true;
+                return (
+                  globalLevel !== false && !(globalLevel === "compact" && hasDetailedHandlerDebug)
+                );
+              });
         try {
           config.logger.info(
             formatTrace(
@@ -288,6 +309,7 @@ export function executeChain<TContext extends object = object>(
 
     let currentReq = req;
     let pendingRequestOverrides: Headers | null = null;
+    let replaceRequestHeaders = false;
     let pendingRewriteUrl: string | null = null;
 
     const headerWrites: EntryWrite[] = [];
@@ -321,21 +343,39 @@ export function executeChain<TContext extends object = object>(
 
     const materializeRequest = (): NextRequest => {
       if (!pendingRequestOverrides) return currentReq;
-      if (!headersDiffer(currentReq.headers, pendingRequestOverrides)) {
+      if (!replaceRequestHeaders && !headersDiffer(currentReq.headers, pendingRequestOverrides)) {
         pendingRequestOverrides = null;
         return currentReq;
       }
-      const merged = new Headers(currentReq.headers);
+      const nextUrl = currentReq.nextUrl.clone();
+      const merged = new Headers();
+      if (replaceRequestHeaders) {
+        currentReq.headers.forEach((value, key) => {
+          if (!isRequestHeaderAllowed(key, requestHeaderPolicy)) merged.set(key, value);
+        });
+      } else {
+        currentReq.headers.forEach((value, key) => {
+          merged.set(key, value);
+        });
+      }
       pendingRequestOverrides.forEach((v, k) => {
         merged.set(k, v);
       });
       pendingRequestOverrides = null;
+      replaceRequestHeaders = false;
       currentReq = new NextRequest(currentReq, { headers: merged });
+      currentReq.nextUrl.pathname = nextUrl.pathname;
+      currentReq.nextUrl.search = nextUrl.search;
       return currentReq;
     };
 
-    const queueRequestOverrides = (overrides: Headers) => {
-      if (!pendingRequestOverrides) pendingRequestOverrides = new Headers();
+    const queueRequestOverrides = (overrides: Headers, mode?: "replace") => {
+      if (mode === "replace") {
+        pendingRequestOverrides = new Headers();
+        replaceRequestHeaders = true;
+      } else if (!pendingRequestOverrides) {
+        pendingRequestOverrides = new Headers();
+      }
       const target = pendingRequestOverrides;
       overrides.forEach((v, k) => {
         target.set(k, v);
@@ -425,16 +465,16 @@ export function executeChain<TContext extends object = object>(
         );
         if (timeoutError || requestCancelled) {
           if (recovered instanceof Response && !isNextResponse(recovered)) {
-            stripRoutingOverrides(recovered);
+            const response = stripRoutingOverrides(recovered);
             headerWrites.push({
               ruleIndex: i,
               ruleName: label,
-              items: responseHeaderItems(recovered.headers),
+              items: responseHeaderItems(response.headers),
             });
             cookieWrites.push({
               ruleIndex: i,
               ruleName: label,
-              items: cookieItemsFromHeaders(recovered.headers),
+              items: cookieItemsFromHeaders(response.headers),
             });
             diagnostics?.push({
               name: safeDiagnosticText(label, 64),
@@ -460,7 +500,7 @@ export function executeChain<TContext extends object = object>(
             return {
               response: finish(
                 finalizeResponse(
-                  recovered,
+                  response,
                   headerWrites,
                   cookieWrites,
                   headerMergeStrategy,
@@ -516,25 +556,25 @@ export function executeChain<TContext extends object = object>(
           };
         }
 
-        stripRoutingOverrides(recovered);
+        const response = stripRoutingOverrides(recovered);
         headerWrites.push({
           ruleIndex: i,
           ruleName: label,
-          items: responseHeaderItems(recovered.headers),
+          items: responseHeaderItems(response.headers),
         });
         cookieWrites.push({
           ruleIndex: i,
           ruleName: label,
-          items: cookieItemsFromHeaders(recovered.headers),
+          items: cookieItemsFromHeaders(response.headers),
         });
         diagnostics?.push({
           name: safeDiagnosticText(label, 64),
           outcome: "recovered",
           durationMs,
           recovery:
-            responseOutcome(recovered).type === "redirect"
+            responseOutcome(response).type === "redirect"
               ? "redirect"
-              : responseOutcome(recovered).type === "rewrite"
+              : responseOutcome(response).type === "rewrite"
                 ? "rewrite"
                 : "response",
           policy: errorPolicy,
@@ -544,7 +584,7 @@ export function executeChain<TContext extends object = object>(
         return {
           response: finish(
             finalizeResponse(
-              recovered,
+              response,
               headerWrites,
               cookieWrites,
               headerMergeStrategy,
@@ -623,13 +663,15 @@ export function executeChain<TContext extends object = object>(
             req.signal,
             effectiveTimeout,
             label,
-            async (signal) => {
+            async (signal, assertActive) => {
               const context = contextFor(signal);
-              if (rule.when && !(await rule.when(activeReq, event, context))) {
-                return { kind: "skipped" as const };
+              if (rule.when) {
+                const matches = await rule.when(activeReq, event, context);
+                assertActive();
+                if (!matches) return { kind: "skipped" as const };
               }
               phase = "handler";
-              if (signal.aborted) throw new RequestCancellationError();
+              assertActive();
               return {
                 kind: "result" as const,
                 raw: await rule.run(activeReq, context, event),
@@ -687,7 +729,7 @@ export function executeChain<TContext extends object = object>(
             }
           }
 
-          if (outcome.request) queueRequestOverrides(outcome.request);
+          if (outcome.request) queueRequestOverrides(outcome.request, outcome.requestMode);
 
           if (outcome.responseHeaders.size || outcome.cookies.size) {
             headerWrites.push({ ruleIndex: i, ruleName: label, items: outcome.responseHeaders });
@@ -722,19 +764,19 @@ export function executeChain<TContext extends object = object>(
           continue;
         }
 
-        stripRoutingOverrides(outcome.response);
+        const response = stripRoutingOverrides(outcome.response);
         headerWrites.push({
           ruleIndex: i,
           ruleName: label,
-          items: responseHeaderItems(outcome.response.headers),
+          items: responseHeaderItems(response.headers),
         });
         cookieWrites.push({
           ruleIndex: i,
           ruleName: label,
-          items: cookieItemsFromHeaders(outcome.response.headers),
+          items: cookieItemsFromHeaders(response.headers),
         });
 
-        const terminalOutcome = responseOutcome(outcome.response);
+        const terminalOutcome = responseOutcome(response);
         diagnostics?.push(
           terminalOutcome.type === "redirect"
             ? {
@@ -758,13 +800,13 @@ export function executeChain<TContext extends object = object>(
                   name: safeDiagnosticText(label, 64),
                   outcome: "response",
                   durationMs: duration,
-                  status: outcome.response.status,
+                  status: response.status,
                   details: handlerDetails(rule, timeout, "matched", "matched", "not-matched"),
                 },
         );
         nextHandlerIndex = i + 1;
 
-        const finalTerminalOutcome = responseOutcome(outcome.response);
+        const finalTerminalOutcome = responseOutcome(response);
         const terminalTrace = diagnostics?.at(-1);
         if (finalTerminalOutcome.type === "rewrite" && terminalTrace?.outcome === "rewrite") {
           terminalTrace.destination = finalTerminalOutcome.destination;
@@ -772,7 +814,7 @@ export function executeChain<TContext extends object = object>(
 
         return finish(
           finalizeResponse(
-            outcome.response,
+            response,
             headerWrites,
             cookieWrites,
             headerMergeStrategy,
@@ -824,10 +866,10 @@ export function executeChain<TContext extends object = object>(
           );
           // No later rule can run here, so a continuation response would skip them. Fail closed.
           if (recovered instanceof Response && !isNextResponse(recovered)) {
-            stripRoutingOverrides(recovered);
+            const response = stripRoutingOverrides(recovered);
             return finish(
               finalizeResponse(
-                recovered,
+                response,
                 headerWrites,
                 cookieWrites,
                 headerMergeStrategy,

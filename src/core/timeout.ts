@@ -37,7 +37,7 @@ export async function runInExecutionScope<T>(
   requestSignal: AbortSignal,
   timeoutMs: number,
   ruleName: string,
-  run: (signal: AbortSignal) => T | Promise<T>,
+  run: (signal: AbortSignal, assertActive: () => void) => T | Promise<T>,
 ): Promise<T> {
   assertValidTimeout(timeoutMs);
   const controller = new AbortController();
@@ -59,6 +59,13 @@ export async function runInExecutionScope<T>(
     controller.abort();
     rejectCancelled(error);
   };
+  const assertActive = () => {
+    if (requestSignal.aborted) cancel(new RequestCancellationError());
+    else if (timeoutError && !failure && performance.now() - scopeStartedAt >= timeoutMs) {
+      cancel(timeoutError);
+    }
+    if (failure) throw failure;
+  };
   const onRequestAbort = () => cancel(new RequestCancellationError());
   requestSignal.addEventListener("abort", onRequestAbort, { once: true });
 
@@ -70,7 +77,7 @@ export async function runInExecutionScope<T>(
   const work = Promise.resolve().then(async () => {
     if (controller.signal.aborted) throw failure ?? new RequestCancellationError();
     try {
-      const result = await run(controller.signal);
+      const result = await run(controller.signal, assertActive);
       if (timeoutError && !failure && performance.now() - scopeStartedAt >= timeoutMs) {
         cancel(timeoutError);
       }

@@ -168,6 +168,40 @@ describe("request context", () => {
     expect(await lin.text()).toBe("lin");
   });
 
+  it("preserves native cancellation on a request reconstructed after header overrides", async () => {
+    const controller = new AbortController();
+    let markEntered!: () => void;
+    let release!: () => void;
+    let reconstructedSignal: AbortSignal | undefined;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const completed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const setHeader = defineHandler({ handler: () => next({ request: { "x-chain": "1" } }) });
+    const waitForAbort = defineHandler({
+      handler: async (request) => {
+        reconstructedSignal = request.signal;
+        markEntered();
+        await new Promise<void>((resolve) => {
+          if (request.signal.aborted) resolve();
+          else request.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        release();
+      },
+    });
+    const pending = chain([setHeader, waitForAbort], { logger: silent })(
+      new NextRequest("https://example.com/", { signal: controller.signal }),
+      event,
+    );
+    await entered;
+    controller.abort();
+    await pending;
+    expect(reconstructedSignal?.aborted).toBe(true);
+    await completed;
+  });
+
   it("keeps elapsed time monotonic when the wall clock changes", async () => {
     const wallClock = Date.now;
     let startedAt = 0;

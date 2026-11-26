@@ -22,8 +22,12 @@ export type RequestMetadata = {
   readonly originalHostname: string;
 };
 
+type ApplicationContext<TContext extends object> = string extends keyof TContext
+  ? never
+  : Omit<Partial<TContext>, keyof RequestMetadata | "signal">;
+
 export type HandlerContext<TContext extends object = object> = RequestMetadata &
-  Omit<Partial<TContext>, keyof RequestMetadata | "signal"> & {
+  ApplicationContext<TContext> & {
     readonly signal: AbortSignal;
   };
 ```
@@ -39,6 +43,9 @@ provide `chain<AppContext>(...)`; those properties are optional until written,
 mutable between handlers, and isolated to one request. No context factory is
 public or required. Reusable descriptors, plain handlers, predicates, and error
 recovery use `HandlerContext<TContext>`.
+Application context types use finite keys; broad string index signatures cannot
+coexist soundly with reserved metadata properties and make `HandlerContext<T>`
+resolve to `never`.
 
 The seven reserved properties are `requestId`, `startedAt`, `elapsedMs`,
 `originalUrl`, `originalPathname`, `originalHostname`, and `signal`. Consumer

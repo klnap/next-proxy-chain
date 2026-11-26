@@ -95,6 +95,52 @@ describe("Timeout through chain", () => {
     expect(res.status).toBe(500);
   });
 
+  it("does not start a handler when its synchronous predicate exceeds the timeout", async () => {
+    let handlerRan = false;
+    const slowPredicate = defineHandler({
+      name: "slow-predicate",
+      rules: {
+        when: () => {
+          const until = performance.now() + 10;
+          while (performance.now() < until) {
+            // Keep the event loop busy to prove the handler cannot start after its deadline.
+          }
+          return true;
+        },
+      },
+      handler: () => {
+        handlerRan = true;
+      },
+    });
+    const chain = composeChain([slowPredicate], { timeout: 1, logger: silentLogger });
+    const response = await chain(new NextRequest("http://localhost:3000/"), fakeEvent);
+    expect(response.status).toBe(500);
+    expect(handlerRan).toBe(false);
+  });
+
+  it("does not start a handler when an async predicate resolves after timeout", async () => {
+    let resolvePredicate!: (matches: boolean) => void;
+    let handlerRan = false;
+    const slowPredicate = defineHandler({
+      name: "late-predicate",
+      rules: {
+        when: () =>
+          new Promise<boolean>((resolve) => {
+            resolvePredicate = resolve;
+          }),
+      },
+      handler: () => {
+        handlerRan = true;
+      },
+    });
+    const chain = composeChain([slowPredicate], { timeout: 2, logger: silentLogger });
+    const response = await chain(new NextRequest("http://localhost:3000/"), fakeEvent);
+    expect(response.status).toBe(500);
+    resolvePredicate(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(handlerRan).toBe(false);
+  });
+
   it("does not surface an unhandled rejection after timeout", async () => {
     const late = defineHandler({
       name: "late",

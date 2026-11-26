@@ -102,6 +102,7 @@ export type ResolvedOutcome =
   | {
       kind: "continue";
       request?: Headers;
+      requestMode?: "replace";
       responseHeaders: Map<string, string>;
       cookies: Map<string, string>;
       rewriteUrl?: string;
@@ -153,15 +154,17 @@ export function resolveRuleResult(
   if (res instanceof NextResponse && res.headers.get("x-middleware-next") === "1") {
     let request: Headers | undefined;
     const decoded = decodeOverriddenRequestHeaders(res.headers);
-    if ([...decoded.keys()].length > 0) {
+    const hasRequestOverride = res.headers.has("x-middleware-override-headers");
+    if (hasRequestOverride) {
       const target = new Headers();
       mergeRequestHeaderOverrides(target, decoded, requestHeaderPolicy);
-      if ([...target.keys()].length) request = target;
+      request = target;
     }
 
     return {
       kind: "continue",
       request,
+      ...(hasRequestOverride ? { requestMode: "replace" as const } : {}),
       responseHeaders: responseHeaderItems(res.headers),
       cookies: cookieItemsFromHeaders(res.headers),
     };
@@ -172,15 +175,17 @@ export function resolveRuleResult(
   if (rewriteHeader && (res.status === 200 || !res.status)) {
     let request: Headers | undefined;
     const decoded = decodeOverriddenRequestHeaders(res.headers);
-    if ([...decoded.keys()].length > 0) {
+    const hasRequestOverride = res.headers.has("x-middleware-override-headers");
+    if (hasRequestOverride) {
       const target = new Headers();
       mergeRequestHeaderOverrides(target, decoded, requestHeaderPolicy);
-      if ([...target.keys()].length) request = target;
+      request = target;
     }
 
     return {
       kind: "continue",
       request,
+      ...(hasRequestOverride ? { requestMode: "replace" as const } : {}),
       responseHeaders: responseHeaderItems(res.headers),
       cookies: cookieItemsFromHeaders(res.headers),
       rewriteUrl: rewriteHeader,

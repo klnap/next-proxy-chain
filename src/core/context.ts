@@ -9,8 +9,12 @@ export type RequestMetadata = {
   readonly originalHostname: string;
 };
 
+type ApplicationContext<TContext extends object> = string extends keyof TContext
+  ? never
+  : Omit<Partial<TContext>, keyof RequestMetadata | "signal">;
+
 export type HandlerContext<TContext extends object = object> = RequestMetadata &
-  Omit<Partial<TContext>, keyof RequestMetadata | "signal"> & {
+  ApplicationContext<TContext> & {
     readonly signal: AbortSignal;
   };
 
@@ -81,7 +85,10 @@ export function createHandlerContext<TContext extends object>(
     },
     defineProperty(_view, property, descriptor) {
       if (RESERVED_CONTEXT_KEYS.has(property)) return false;
-      return Reflect.defineProperty(applicationState, property, descriptor);
+      return Reflect.defineProperty(applicationState, property, {
+        ...descriptor,
+        configurable: true,
+      });
     },
     getPrototypeOf() {
       return null;

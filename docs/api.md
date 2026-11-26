@@ -144,13 +144,17 @@ type RequestMetadata = {
   readonly originalHostname: string;
 };
 
+type ApplicationContext<TContext extends object> = string extends keyof TContext
+  ? never
+  : Omit<Partial<TContext>, keyof RequestMetadata | "signal">;
+
 type HandlerContext<TContext extends object = object> = RequestMetadata &
-  Omit<Partial<TContext>, keyof RequestMetadata | "signal"> & {
+  ApplicationContext<TContext> & {
     readonly signal: AbortSignal;
   };
 ```
 
-Every invocation creates one ID and metadata snapshot. Application properties are mutable, optional until set, and isolated per request. The seven metadata properties and `signal` are immutable.
+Every invocation creates one ID and metadata snapshot. Application properties are mutable, optional until set, and isolated per request. Use finite-key object types for application state; broad string index signatures make `HandlerContext<T>` resolve to `never`. The seven metadata properties and `signal` are immutable.
 
 ## `RuleTimeoutError`
 

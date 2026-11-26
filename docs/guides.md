@@ -74,7 +74,7 @@ export default chain([securityHeaders, [requireSession, { include: path("/dashbo
 
 ## Share typed state between rules
 
-Pass an application context type to `chain`. Its properties are optional until set and isolated per request. Request identity and original URL metadata are built in.
+Pass a finite-key application context type to `chain`. Its properties are optional until set and isolated per request. Broad string index signatures make `HandlerContext<T>` resolve to `never`. Request identity and original URL metadata are built in.
 
 ```ts
 type RequestState = { locale?: string };

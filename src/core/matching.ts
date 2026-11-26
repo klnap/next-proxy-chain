@@ -122,7 +122,7 @@ export function path(pattern: string | RegExp): RegExp {
   return compileStringPath(pattern);
 }
 
-export function toPathRegex(matcher: PathMatcher | PathMatcher[]): RegExp {
+function toPathRegex(matcher: PathMatcher | PathMatcher[]): RegExp {
   const list = (Array.isArray(matcher) ? matcher : [matcher]) as (string | RegExp)[];
   const regexes = list.map((m) => path(m));
   if (regexes.length === 1) return toStatelessRegExp(regexes[0]!);

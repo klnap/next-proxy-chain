@@ -18,12 +18,6 @@ export type NextOptions = {
  */
 export type NextResult = NextOptions & { readonly [NEXT]: true };
 
-export type ProxyResult<TResponse = NextResponse | Response> =
-  | TResponse
-  | NextResult
-  | undefined
-  | void;
-
 export type PathMatcher = RegExp | string;
 
 export type HostMatcher = string | RegExp | readonly (string | RegExp)[];

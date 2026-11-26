@@ -28,3 +28,8 @@ void typedChain;
 
 type InvalidContext = HandlerContext<{ requestId: string }>;
 void (null as unknown as InvalidContext);
+
+type IndexSignatureContext = HandlerContext<Record<string, string>>;
+type IsNever<T> = [T] extends [never] ? true : false;
+const indexSignatureContextRejected: IsNever<IndexSignatureContext> = true;
+void indexSignatureContextRejected;

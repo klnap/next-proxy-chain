@@ -84,7 +84,7 @@ const setUser = defineHandler({
 });
 ```
 
-Type the application state with `chain<Context>(...)`; its properties are optional until set. Built-in properties include `requestId`, `startedAt`, `elapsedMs`, `originalUrl`, `originalPathname`, `originalHostname`, and the current execution's `signal`. These properties are read-only. See the [typed context guide](guides.md#share-typed-state-between-rules).
+Type the application state with `chain<Context>(...)`; its properties are optional until set. Use finite-key object types; broad string index signatures make `HandlerContext<T>` resolve to `never`. Built-in properties include `requestId`, `startedAt`, `elapsedMs`, `originalUrl`, `originalPathname`, `originalHostname`, and the current execution's `signal`. These properties are read-only. See the [typed context guide](guides.md#share-typed-state-between-rules).
 
 Context is not the place to pass data to the browser. Use response headers or cookies for that.
 

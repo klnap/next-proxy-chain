@@ -1,5 +1,4 @@
 {
-  "root": true,
   "$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
   "vcs": {
     "enabled": true,
@@ -12,155 +11,27 @@
       "**",
       "!**/node_modules",
       "!**/dist",
-      "!**/.generated",
-      "!**/.cache",
-      "!**/.next",
       "!**/coverage",
-      "!scripts/css-sidefx-fixture/out",
-      "!**/*.tsbuildinfo",
       "!**/bun.lock",
-      "!**/*-tailwind.css"
+      "!**/.changeset/*.md"
     ]
-  },
-  "css": {
-    "parser": {
-      "tailwindDirectives": true
-    }
-  },
-  "assist": {
-    "enabled": true,
-    "actions": {
-      "source": {
-        "organizeImports": "on"
-      }
-    }
   },
   "formatter": {
     "enabled": true,
-    "formatWithErrors": false,
     "indentStyle": "space",
     "indentWidth": 2,
-    "lineWidth": 100,
-    "lineEnding": "lf"
+    "lineWidth": 100
   },
   "javascript": {
     "formatter": {
-      "quoteStyle": "single",
-      "jsxQuoteStyle": "single",
-      "trailingCommas": "es5",
-      "semicolons": "asNeeded",
-      "arrowParentheses": "always"
+      "quoteStyle": "double",
+      "semicolons": "always"
     }
   },
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended",
-      "a11y": {
-        "recommended": false
-      },
-      "correctness": {
-        "noUnusedVariables": "warn",
-        "noUnusedImports": "warn",
-        "noNodejsModules": "off",
-        "useExhaustiveDependencies": "warn"
-      },
-      "performance": {
-        "noImgElement": "off"
-      },
-      "complexity": {
-        "noImportantStyles": "off"
-      },
-      "security": {
-        "noDangerouslySetInnerHtml": "off"
-      },
-      "style": {
-        "useConst": "error",
-        "noNonNullAssertion": "off",
-        "noParameterAssign": "off",
-        "noDefaultExport": "error"
-      },
-      "suspicious": {
-        "noConsole": "error",
-        "noExplicitAny": "off",
-        "noArrayIndexKey": "off",
-        "noUndeclaredEnvVars": "off",
-        "noConfusingVoidType": "off"
-      }
+      "preset": "recommended"
     }
-  },
-  "overrides": [
-    {
-      "includes": [
-        "scripts/**",
-        "**/*.test.*",
-        "**/*.spec.*",
-        "tests/**",
-        "release-consumers/**",
-        "bench/**"
-      ],
-      "linter": {
-        "rules": {
-          "suspicious": {
-            "noConsole": "off",
-            "noAssignInExpressions": "off"
-          },
-          "correctness": {
-            "noInnerDeclarations": "off",
-            "noChildrenProp": "off"
-          },
-          "complexity": {
-            "noCommaOperator": "off"
-          }
-        }
-      }
-    },
-    {
-      "includes": ["bin/**", "src/cli/**", "src/core/logger.ts", "src/core/pipeline.ts"],
-      "linter": {
-        "rules": {
-          "suspicious": {
-            "noConsole": "off"
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "**/*.tsx",
-        "**/app/**/page.tsx",
-        "**/app/**/layout.tsx",
-        "**/*.config.{js,ts,mjs,cjs}",
-        "**/middleware.ts",
-        "**/proxy.ts",
-        "**/loader.ts",
-        "src/types/**",
-        "examples/**",
-        "tests/docs/**"
-      ],
-      "linter": {
-        "rules": {
-          "style": {
-            "noDefaultExport": "off"
-          },
-          "correctness": {
-            "noChildrenProp": "off"
-          }
-        }
-      }
-    },
-    {
-      "includes": ["**/*.css"],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noImportantStyles": "off"
-          },
-          "style": {
-            "noDescendingSpecificity": "off"
-          }
-        }
-      }
-    }
-  ]
+  }
 }

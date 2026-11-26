@@ -1,15 +1,14 @@
-export { isNextResult, next } from './core/actions'
-export type { ChainEntry, ChainScope } from './core/chain'
-export { chain } from './core/chain'
-export { defineHandler } from './core/handler'
-export { createProxyContext } from './core/context'
-export { defineProxy, proxyChain } from './core/engine'
-export { host, path } from './core/matching'
-export { RuleTimeoutError } from './core/timeout'
+export { isNextResult, next } from "./core/actions";
+export type { ChainEntry, ChainScope } from "./core/chain";
+export { chain } from "./core/chain";
+export { defineHandler } from "./core/handler";
+export type { DefinedHandler } from "./core/handler";
+export type { HandlerContext, RequestMetadata } from "./core/context";
+export { host, path } from "./core/matching";
+export { RuleTimeoutError } from "./core/timeout";
 export type {
   ChainLogger,
-  DefinedProxy,
-  Entry,
+  ChainOptions,
   HostMatcher,
   MergeStrategy,
   NativeProxy,
@@ -18,13 +17,8 @@ export type {
   OnErrorHandler,
   OnErrorResult,
   PathMatcher,
-  ProxyChainOptions,
-  ProxyContext,
-  ProxyFn,
-  ProxyPathFilter,
-  ProxyRule,
   RequestHeaderPolicy,
-} from './core/types'
+} from "./core/types";
 export type {
   HandlerDebugOptions,
   HandlerDiagnosticDetails,
@@ -35,4 +29,4 @@ export type {
   DebugLevel,
   HandlerTrace,
   SkipReason,
-} from './core/diagnostics/types'
+} from "./core/diagnostics/types";

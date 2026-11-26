@@ -1,16 +1,9 @@
-# Dependencies
 /graphify-out/
 node_modules/
-
-# Production builds
 dist/
-
-# Logs & caches
 coverage/
 *.tsbuildinfo
 *.log
 *.tgz
-
-# Environment & OS
-.DS_Store
 .env*
+.DS_Store

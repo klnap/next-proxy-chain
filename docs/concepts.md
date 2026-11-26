@@ -4,7 +4,7 @@ This page describes how a request moves through a chain. Read it before writing 
 
 ## One request, one pass
 
-`proxyChain` returns a single function. Next.js calls it once per request. It runs the rules in array order, one at a time:
+`chain` returns a single function. Next.js calls it once per request. It runs the handlers in array order, one at a time:
 
 1. Check whether the rule's `include` and `exclude` scopes match the request. If not, skip the rule.
 2. Run the rule with the current request and the request's context.
@@ -14,20 +14,20 @@ If every rule continues, the chain ends with `NextResponse.next()`, or with a re
 
 ## Two kinds of rules
 
-- A **native handler** is a plain function `(request, event)`. `chain()` passes the native arguments unchanged, so a handler written for `proxy.ts` works as it is.
-- A **context rule** is created with `defineProxy()`. It receives `(request, context, event)`. The context is created for each request by `createContext`.
+- A **native handler** is a plain function `(request, event)`. `chain()` passes the native arguments unchanged and adds request context as an optional third argument.
+- A **configured handler** is created with `defineHandler()`. It receives `(request, event, context)`. Context metadata and state are created for each request.
 
 Both kinds run in array order, follow the same continuation rules, and can be scoped with a tuple.
 
 ## Continue or stop
 
-| A rule returns | Effect |
-| :--- | :--- |
-| `next()` or nothing | Continue to the next rule. |
-| `next({ request, headers })` | Continue. Request headers are passed on, response headers are queued. |
-| `NextResponse.rewrite(url)` | Continue. The rewrite applies at the end, unless a later rule stops. |
-| `NextResponse.next()` | Continue. Its request-header overrides and cookies are carried forward. |
-| `Response`, `NextResponse.redirect()`, `NextResponse.json()` | Stop and return that response. |
+| A rule returns                                               | Effect                                                                  |
+| :----------------------------------------------------------- | :---------------------------------------------------------------------- |
+| `next()` or nothing                                          | Continue to the next rule.                                              |
+| `next({ request, headers })`                                 | Continue. Request headers are passed on, response headers are queued.   |
+| `NextResponse.rewrite(url)`                                  | Continue. The rewrite applies at the end, unless a later rule stops.    |
+| `NextResponse.next()`                                        | Continue. Its request-header overrides and cookies are carried forward. |
+| `Response`, `NextResponse.redirect()`, `NextResponse.json()` | Stop and return that response.                                          |
 
 Stopping is immediate. Rules after a stopping rule never run, so their headers, cookies, and checks are not applied. This matters most for security headers. See [Ordering](#ordering-and-early-responses).
 
@@ -36,7 +36,7 @@ Stopping is immediate. Rules after a stopping rule never run, so their headers, 
 A rule can take an `include` and an `exclude`:
 
 ```ts
-authRule({ include: path('/admin/**'), exclude: path('/admin/login') })
+[authHandler, { include: path("/admin/**"), exclude: path("/admin/login") }];
 ```
 
 - No `include`: the rule runs for every request.
@@ -72,16 +72,19 @@ Headers from rules that continued before a stopping rule are still merged into i
 
 ## Context
 
-Each request gets its own context object, created before the first rule runs. Rules can read and write it. Nothing in it survives the request.
+Each request gets an ID, immutable metadata, and isolated application state. Rules can read and write application properties. Nothing survives the request.
 
 ```ts
-const setUser = defineProxy('set-user', (req, ctx) => {
-  ctx.set('userId', 'usr_123')
-  return next()
-})
+const setUser = defineHandler({
+  name: "set-user",
+  handler: (_request, _event, context) => {
+    context.userId = "usr_123";
+    return next();
+  },
+});
 ```
 
-The default context is a `Map<string, unknown>`. For a typed object, pass `createContext`. See the [typed context guide](guides.md#share-typed-state-between-rules).
+Type the application state with `chain<Context>(...)`; its properties are optional until set. Use finite-key object types; broad string index signatures make `HandlerContext<T>` resolve to `never`. Built-in properties include `requestId`, `startedAt`, `elapsedMs`, `originalUrl`, `originalPathname`, `originalHostname`, and the current execution's `signal`. These properties are read-only. See the [typed context guide](guides.md#share-typed-state-between-rules).
 
 Context is not the place to pass data to the browser. Use response headers or cookies for that.
 
@@ -114,17 +117,19 @@ See [examples/01](../examples/01-quick-start.ts) for the first pattern.
 
 A rule can throw. What happens next depends on `onError`:
 
-| Situation | Result |
-| :--- | :--- |
-| Rule throws, no `onError` | `500 Internal Server Error`. Later rules do not run. |
-| `onError` returns a `Response` | The chain stops with that response. Earlier headers and cookies are still merged. |
-| `onError` returns `next()` or `NextResponse.next()` | The chain continues with the next rule. |
-| `onError` returns nothing | `500 Internal Server Error`. |
-| `onError` throws | `500 Internal Server Error`. |
+| Situation                                           | Result                                                                            |
+| :-------------------------------------------------- | :-------------------------------------------------------------------------------- |
+| Rule throws, no `onError`                           | `500 Internal Server Error`. Later rules do not run.                              |
+| `onError` returns a `Response`                      | The chain stops with that response. Earlier headers and cookies are still merged. |
+| `onError` returns `next()` or `NextResponse.next()` | The chain continues with the next rule.                                           |
+| `onError` returns nothing                           | `500 Internal Server Error`.                                                      |
+| `onError` throws                                    | `500 Internal Server Error`.                                                      |
 
 `onError` receives the error and the index of the rule that threw. Index `-1` means the error came from the engine itself, after all rules ran or while reading a rule's return value. No rule is left to continue to, so only a `Response` is honored there. `next()` or `NextResponse.next()` returns `500`.
 
-`ruleTimeoutMs` gives each rule a time limit. A rule that runs past it is treated as thrown, with a `RuleTimeoutError`. The rule function is not cancelled: it keeps running in the background, and its late result is ignored.
+Chain option `timeout` gives each handler and its predicate one shared deadline. A timeout aborts that handler's signal, stops the chain, and is reported as `RuleTimeoutError`. The engine stops waiting even when user code ignores the signal; ignored work may continue in the background.
+
+Ordinary errors may recover with a response or continue with `next()`. Timeout and request-cancellation recovery accepts only a terminal response. Without timeout recovery, the chain fails closed with `500`. Without cancellation recovery, it returns `NextResponse.next()` as the framework handoff. Recovery runs with a separate signal and context view.
 
 When a rule continues after `onError` returns `next()`, that rule's own result is skipped, and the rules after it run as usual. Use this only when skipping the rule is safe for your application.
 

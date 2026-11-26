@@ -1,25 +1,35 @@
-import type { ProxyContext } from '../../src/index'
-import { defineProxy, next, proxyChain } from '../../src/index'
+import type { HandlerContext } from "../../src/index";
+import { chain as composeChain, defineHandler, next } from "../../src/index";
 
-declare function assertProxyContext(ctx: ProxyContext): void
-
-const defaultChain = proxyChain([
-  defineProxy((_req, ctx) => {
-    assertProxyContext(ctx)
-    return next()
+const defaultChain = composeChain([
+  defineHandler({
+    handler: (_req, _event, ctx) => {
+      const requestId: string = ctx.requestId;
+      const signal: AbortSignal = ctx.signal;
+      return next({ headers: { "x-request-id": requestId, "x-aborted": String(signal.aborted) } });
+    },
   }),
-])
-void defaultChain
+]);
+void defaultChain;
 
-type UserCtx = { user: string }
-
-const typedChain = proxyChain({ createContext: (): UserCtx => ({ user: 'ada' }) }, [
-  defineProxy<UserCtx>((_req, ctx) => {
-    const _user: string = ctx.user
-    return next()
+type UserCtx = { user: string };
+const typedChain = composeChain<UserCtx>([
+  defineHandler<UserCtx>({
+    handler: (_req, _event, ctx) => {
+      const _user: string | undefined = ctx.user;
+      ctx.user = "ada";
+      // @ts-expect-error requestId is immutable metadata
+      ctx.requestId = "spoofed";
+      return next();
+    },
   }),
-])
-void typedChain
+]);
+void typedChain;
 
-// @ts-expect-error custom TContext requires createContext
-proxyChain<{ user: string }>([defineProxy(() => next())])
+type InvalidContext = HandlerContext<{ requestId: string }>;
+void (null as unknown as InvalidContext);
+
+type IndexSignatureContext = HandlerContext<Record<string, string>>;
+type IsNever<T> = [T] extends [never] ? true : false;
+const indexSignatureContextRejected: IsNever<IndexSignatureContext> = true;
+void indexSignatureContextRejected;

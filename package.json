@@ -58,7 +58,7 @@
     "check": "bun run format && bun run lint && bun run typecheck && bun test && bun run build && bun run verify:package",
     "changeset": "changeset",
     "changeset:version": "changeset version",
-    "changeset:version-check": "bun run changeset:version && bun run check",
+    "changeset:version-check": "bun run changeset:version && bunx biome format --write CHANGELOG.md && bun run check",
     "format": "biome format .",
     "format:write": "biome format --write .",
     "typecheck": "tsc --noEmit -p tsconfig.json",

@@ -1,3 +1,5 @@
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
 export class RuleTimeoutError extends Error {
   readonly ruleName: string;
   readonly timeoutMs: number;
@@ -10,36 +12,101 @@ export class RuleTimeoutError extends Error {
   }
 }
 
-/** Fail fast when ruleTimeoutMs is a non-finite number (NaN / ±Infinity). */
-export function assertFiniteRuleTimeoutMs(ruleTimeoutMs: number | undefined): void {
-  if (ruleTimeoutMs != null && (!Number.isFinite(ruleTimeoutMs) || ruleTimeoutMs < 0)) {
+export class RequestCancellationError extends Error {
+  constructor() {
+    super("[proxy-chain] incoming request was cancelled");
+    this.name = "AbortError";
+  }
+}
+
+export function assertValidTimeout(timeoutMs: unknown): asserts timeoutMs is number | undefined {
+  if (
+    timeoutMs !== undefined &&
+    (typeof timeoutMs !== "number" ||
+      !Number.isSafeInteger(timeoutMs) ||
+      timeoutMs < 0 ||
+      timeoutMs > MAX_TIMEOUT_MS)
+  ) {
     throw new RangeError(
-      `[proxy-chain] ruleTimeoutMs must be a finite number >= 0 (0 disables), got ${ruleTimeoutMs}`,
+      `[proxy-chain] timeout must be an integer from 0 through ${MAX_TIMEOUT_MS} milliseconds`,
     );
   }
 }
 
-/**
- * Enforces a strict execution time budget on an asynchronous rule operation.
- */
-export async function withRuleTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number | undefined,
+export async function runInExecutionScope<T>(
+  requestSignal: AbortSignal,
+  timeoutMs: number,
   ruleName: string,
+  run: (signal: AbortSignal) => T | Promise<T>,
 ): Promise<T> {
-  assertFiniteRuleTimeoutMs(timeoutMs);
-  if (timeoutMs == null || timeoutMs <= 0) return promise;
+  assertValidTimeout(timeoutMs);
+  const controller = new AbortController();
+  if (requestSignal.aborted) {
+    controller.abort();
+    throw new RequestCancellationError();
+  }
+
+  const scopeStartedAt = performance.now();
+  const timeoutError = timeoutMs > 0 ? new RuleTimeoutError(ruleName, timeoutMs) : undefined;
+  let failure: RuleTimeoutError | RequestCancellationError | undefined;
+  let rejectCancelled!: (reason: Error) => void;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    rejectCancelled = reject;
+  });
+  const cancel = (error: RuleTimeoutError | RequestCancellationError) => {
+    if (failure) return;
+    failure = error;
+    controller.abort();
+    rejectCancelled(error);
+  };
+  const onRequestAbort = () => cancel(new RequestCancellationError());
+  requestSignal.addEventListener("abort", onRequestAbort, { once: true });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new RuleTimeoutError(ruleName, timeoutMs)), timeoutMs);
+  if (timeoutError) {
+    timer = setTimeout(() => cancel(timeoutError), timeoutMs);
+  }
+
+  const work = Promise.resolve().then(async () => {
+    if (controller.signal.aborted) throw failure ?? new RequestCancellationError();
+    try {
+      const result = await run(controller.signal);
+      if (timeoutError && !failure && performance.now() - scopeStartedAt >= timeoutMs) {
+        cancel(timeoutError);
+      }
+      if (failure) throw failure;
+      return result;
+    } catch (error) {
+      if (timeoutError && !failure && performance.now() - scopeStartedAt >= timeoutMs) {
+        cancel(timeoutError);
+      }
+      throw failure ?? error;
+    }
   });
 
   try {
-    return await Promise.race([promise, timeout]);
+    return await Promise.race([work, cancelled]);
+  } catch (error) {
+    throw failure ?? error;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
-    // Timeout does not cancel the rule. Swallow a later rejection so it is not unhandled.
-    void promise.catch(() => {});
+    requestSignal.removeEventListener("abort", onRequestAbort);
+    void work.catch(() => {});
+  }
+}
+
+export async function runInRecoveryScope<T>(
+  requestSignal: AbortSignal,
+  run: (signal: AbortSignal) => T | Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (requestSignal.aborted) controller.abort();
+  else requestSignal.addEventListener("abort", abort, { once: true });
+
+  try {
+    return await run(controller.signal);
+  } finally {
+    requestSignal.removeEventListener("abort", abort);
   }
 }

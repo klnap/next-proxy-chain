@@ -1,13 +1,12 @@
 import { chain as composeChain, defineHandler, next, path } from "@klnap/next-proxy-chain";
 
-type Ctx = { requestId: string };
+type Ctx = { locale?: string };
 
 // Each integration exports a factory. The app decides where and in which order it runs.
 export function createRequestIdRule() {
   return defineHandler<Ctx>({
     name: "request-id",
     handler: (req, _event, ctx) => {
-      ctx.requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
       return next({ request: { "x-request-id": ctx.requestId } });
     },
   });
@@ -38,6 +37,4 @@ const requestId = createRequestIdRule();
 const locale = createLocaleRule(["en", "pl"], "en");
 const maintenance = createMaintenanceRule(false);
 
-export default composeChain([requestId, maintenance, [locale, { include: path("/**") }]], {
-  createContext: (): Ctx => ({ requestId: "" }),
-});
+export default composeChain<Ctx>([requestId, maintenance, [locale, { include: path("/**") }]]);

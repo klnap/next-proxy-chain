@@ -12,7 +12,7 @@ const lookupFeatureFlags = defineHandler({
 
 export default composeChain([lookupFeatureFlags], {
   // Each rule gets at most 500 ms. A rule that exceeds it goes to onError.
-  ruleTimeoutMs: 500,
+  timeout: 500,
   // A Response stops the chain with that response.
   // Returning nothing fails closed: the request gets a 500.
   onError: () => new Response("Service unavailable", { status: 503 }),

@@ -82,14 +82,4 @@ describe("external review regressions", () => {
       [],
     );
   });
-
-  it("does not treat /tenant-other as already inside the /tenant folder", async () => {
-    const folder = defineHandler({
-      name: "folder",
-      handler: () => next({ request: { "x-tenant-folder": "/tenant" } }),
-    });
-    const handler = composeChain([folder], { logger: silent, hostFolderHeader: "x-tenant-folder" });
-    const res = await handler(new NextRequest("http://localhost/tenant-other/page"), event);
-    expect(res.headers.get("x-middleware-rewrite")).toContain("/tenant/tenant-other/page");
-  });
 });

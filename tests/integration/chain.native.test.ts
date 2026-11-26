@@ -82,10 +82,7 @@ describe("chain() with native Next.js handlers", () => {
       name: "report-user",
       handler: (_r, _event, ctx) => next({ headers: { "x-seen-user": ctx.user ?? "none" } }),
     });
-    const handler = composeChain([setUser, reportUser], {
-      logger: silent,
-      createContext: (): Ctx => ({}),
-    });
+    const handler = composeChain<Ctx>([setUser, reportUser], { logger: silent });
     const a = await handler(
       new NextRequest("http://localhost/a", { headers: { "x-user": "ada" } }),
       {} as never,
@@ -106,49 +103,42 @@ describe("chain() with native Next.js handlers", () => {
   });
 
   it("passes the request context to a native handler as the third argument", async () => {
-    type Ctx = { requestId: string };
+    type Ctx = { user?: string };
     const tag = defineHandler<Ctx>({
       name: "tag",
       handler: (_r, _event, ctx) => {
-        ctx.requestId = "req-1";
+        ctx.user = "ada";
         return next();
       },
     });
     const native = (
       _req: NextRequest,
       event: { waitUntil(p: Promise<unknown>): void },
-      ctx: Ctx,
+      ctx: { requestId: string; user?: string },
     ) => {
       event.waitUntil(Promise.resolve());
-      return next({ headers: { "x-request-id": ctx.requestId } });
+      return next({ headers: { "x-request-id": ctx.requestId, "x-user": ctx.user ?? "" } });
     };
-    const handler = composeChain([tag, native], {
-      logger: silent,
-      createContext: (): Ctx => ({ requestId: "" }),
-    });
+    const handler = composeChain<Ctx>([tag, native], { logger: silent });
     const res = await handler(new NextRequest("http://localhost/x"), { waitUntil() {} } as never);
-    expect(res.headers.get("x-request-id")).toBe("req-1");
+    expect(res.headers.get("x-request-id")).toMatch(/^req_[0-9a-f-]{36}$/i);
+    expect(res.headers.get("x-user")).toBe("ada");
   });
 
-  it("createContext sets a request id at the start that every handler sees", async () => {
-    type Ctx = { requestId: string };
-    const native = (_req: NextRequest, _event: unknown, ctx: Ctx) =>
-      next({ headers: { "x-request-id": ctx.requestId } });
-    const rule = defineHandler<Ctx>({
+  it("generates a request id independent of incoming headers", async () => {
+    const rule = defineHandler({
       name: "rule",
       handler: (_r, _event, ctx) => next({ headers: { "x-seen-id": ctx.requestId } }),
     });
-    const handler = composeChain([rule, native], {
-      logger: silent,
-      createContext: (req): Ctx => ({ requestId: req.headers.get("x-request-id") ?? "generated" }),
-    });
+    const handler = composeChain([rule], { logger: silent });
     const withId = await handler(
       new NextRequest("http://localhost/x", { headers: { "x-request-id": "abc" } }),
       {} as never,
     );
-    expect(withId.headers.get("x-request-id")).toBe("abc");
-    expect(withId.headers.get("x-seen-id")).toBe("abc");
+    expect(withId.headers.get("x-request-id")).toBeNull();
+    expect(withId.headers.get("x-seen-id")).toMatch(/^req_[0-9a-f-]{36}$/i);
     const generated = await handler(new NextRequest("http://localhost/y"), {} as never);
-    expect(generated.headers.get("x-request-id")).toBe("generated");
+    expect(generated.headers.get("x-seen-id")).toMatch(/^req_[0-9a-f-]{36}$/i);
+    expect(generated.headers.get("x-seen-id")).not.toBe(withId.headers.get("x-seen-id"));
   });
 });

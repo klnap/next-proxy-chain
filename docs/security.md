@@ -47,7 +47,7 @@ Put auth checks before any rule that can answer a request on its own, such as a 
 - Scopes match the decoded path with no trailing slash. `/admin/` is treated as `/admin`, and `/%61dmin/users` as `/admin/users`. Scope patterns apply to the same form Next.js routes on.
 - `/api/*` matches exactly one segment. `/api/**` matches everything below `/api`. For access control, prefer `**` so that deeper routes are covered.
 - Malformed percent-encoding, such as `%E0%A4%A`, returns `400 Bad Request` before any rule runs.
-- A rule sees the path after rewrites made by earlier rules. It does not see the `hostFolderHeader` prefix, which is applied after all rules run. If a rule protects a path, check that the path it sees is the path that is served.
+- A rule sees the path after rewrites made by earlier rules. Check that the path it protects is the path that Next.js serves.
 
 ## Host matching
 
@@ -84,23 +84,23 @@ Treat traces as operational data. External logger callbacks can persist them bey
 
 ## Error recovery
 
-`onError` decides what happens after a rule throws or times out:
+For ordinary handler errors, `onError` decides what happens:
 
 - `Response`: the chain stops with it. Earlier headers and cookies are kept.
 - `next()` or `NextResponse.next()`: the chain continues to the next rule. The rule that failed does not run its protection. Use this only for rules that do not enforce access control.
 - nothing, or a throw: `500 Internal Server Error`.
 
-Engine-level failures, after all rules ran, cannot continue. `next()` returns `500` there.
+Timeout recovery is stricter: only a terminal `Response` is accepted. Missing, throwing, or continuing recovery fails closed with `500`. Request-cancellation recovery also accepts only a terminal `Response`; without one, the chain returns `NextResponse.next()` as the framework handoff. Neither fallback guarantees downstream work stops after a client disconnect.
 
 ## Timeouts
 
-`ruleTimeoutMs` stops waiting for a rule. It does not cancel the rule. The rule keeps running, and its side effects still happen. Keep rules idempotent if they write anything, and do not rely on a timeout to prevent an action.
+Chain option `timeout` covers the predicate and handler together. A timeout aborts the execution-scoped signal and stops the engine from waiting. Cooperative operations can stop early, but ignored signals, synchronous JavaScript, and side effects cannot be forcibly stopped or undone. Do not use a timeout as a transaction or authorization boundary.
 
-A timed-out rule goes to `onError`. Without one, the request gets a `500`.
+Each handler gets a separate signal. Predicates share their handler's signal. `event.waitUntil()` work is not supervised by the timeout; explicitly passing a handler signal gives that background work the handler scope's lifecycle.
 
 ## Context
 
-The context is created for each request and dropped when the request finishes. It is not shared between requests. Do not store secrets in it that you later return in a response.
+Each request gets an isolated context. Built-in request metadata is immutable; application properties remain mutable. `originalUrl` may contain sensitive query values. Do not log or forward it without redaction. Context values do not enter built-in diagnostics.
 
 ## Next.js version notes
 

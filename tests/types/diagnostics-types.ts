@@ -23,7 +23,7 @@ const auth = defineHandler<Context>({
   },
 });
 
-export const configured = composeChain([auth], {
+export const configured = composeChain<Context>([auth], {
   debug: "compact",
   tracePath: false,
   onTrace: (trace) => {
@@ -38,7 +38,6 @@ export const configured = composeChain([auth], {
       }
     }
   },
-  createContext: (): Context => ({ user: "ada" }),
 });
 
 defineHandler({

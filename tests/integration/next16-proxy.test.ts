@@ -6,22 +6,23 @@ import { chain as composeChain, defineHandler, host, next } from "../../src";
 const mockEvent = {} as NextFetchEvent;
 
 describe("Next.js 16 Integration: proxy.ts cycle", () => {
-  it("executes multi-tenant proxy routing seamlessly in Next.js 16 conventions", async () => {
-    const multiHostProxy = defineHandler({
-      name: "multiHost",
+  it("composes host-based routing rules in Next.js 16 conventions", async () => {
+    type Context = { tier?: string };
+    const hostRouter = defineHandler<Context>({
+      name: "host-router",
       handler: (req, _event, ctx) => {
         const hostname = req.headers.get("host")?.split(":")[0];
         if (hostname === "admin.platform.com") {
-          ctx.set("tenant", "admin");
+          ctx.tier = "unlimited";
           return next({
-            request: { "x-tenant-id": "admin-portal" },
+            request: { "x-host-route": "admin-portal" },
             headers: { "x-routed-by": "next-proxy-chain" },
           });
         }
         if (hostname === "store.platform.com") {
-          ctx.set("tenant", "store");
+          ctx.tier = "standard";
           return next({
-            request: { "x-tenant-id": "ecommerce-store" },
+            request: { "x-host-route": "ecommerce-store" },
             headers: { "x-routed-by": "next-proxy-chain" },
           });
         }
@@ -29,25 +30,24 @@ describe("Next.js 16 Integration: proxy.ts cycle", () => {
       },
     });
 
-    const rateLimitProxy = defineHandler({
-      name: "rateLimit",
+    const rateLimitProxy = defineHandler<Context>({
+      name: "rate-limit",
       handler: (_req, _event, ctx) => {
-        const tenant = ctx.get("tenant");
         return next({
-          headers: { "x-rate-limit-tier": tenant === "admin" ? "unlimited" : "standard" },
+          headers: { "x-rate-limit-tier": ctx.tier ?? "standard" },
         });
       },
     });
 
-    const proxy = composeChain([
-      multiHostProxy,
+    const proxy = composeChain<Context>([
+      hostRouter,
       [
         rateLimitProxy,
         { include: { host: host([/^admin\.platform\.com$/, /^store\.platform\.com$/]) } },
       ],
     ]);
 
-    // 1. Admin host request
+    // Admin host request
     const adminReq = new NextRequest("https://admin.platform.com/overview", {
       headers: { host: "admin.platform.com" },
     });
@@ -56,7 +56,7 @@ describe("Next.js 16 Integration: proxy.ts cycle", () => {
     expect(adminRes.headers.get("x-routed-by")).toBe("next-proxy-chain");
     expect(adminRes.headers.get("x-rate-limit-tier")).toBe("unlimited");
 
-    // 2. Store host request
+    // Store host request
     const storeReq = new NextRequest("https://store.platform.com/products", {
       headers: { host: "store.platform.com" },
     });

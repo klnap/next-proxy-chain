@@ -1,7 +1,7 @@
 // Run: bun run bench/chain.bench.ts
 // Measures chain() request and initialization overhead for native handlers.
 import { NextRequest, NextResponse } from "next/server";
-import { chain } from "../src/index";
+import { chain, defineHandler } from "../src/index";
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} };
 const native = [
@@ -25,11 +25,31 @@ const req = () => new NextRequest("http://localhost/dashboard/home");
 const iterations = 50_000;
 
 const viaChain = chain(native, { logger: silent });
+const viaContext = chain(
+  [
+    defineHandler({
+      name: "context",
+      handler: (_request, _event, context) => {
+        void context.requestId;
+        void context.signal;
+      },
+    }),
+  ],
+  { logger: silent },
+);
 
 await time(
   "chain (3 native)",
   async () => {
     await viaChain(req(), event);
+  },
+  iterations,
+);
+
+await time(
+  "chain (context metadata)",
+  async () => {
+    await viaContext(req(), event);
   },
   iterations,
 );

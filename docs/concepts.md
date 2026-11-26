@@ -14,8 +14,8 @@ If every rule continues, the chain ends with `NextResponse.next()`, or with a re
 
 ## Two kinds of rules
 
-- A **native handler** is a plain function `(request, event)`. `chain()` passes the native arguments unchanged, so a handler written for `proxy.ts` works as it is.
-- A **configured handler** is created with `defineHandler()`. It receives `(request, event, context)`. The context is created for each request by `createContext`.
+- A **native handler** is a plain function `(request, event)`. `chain()` passes the native arguments unchanged and adds request context as an optional third argument.
+- A **configured handler** is created with `defineHandler()`. It receives `(request, event, context)`. Context metadata and state are created for each request.
 
 Both kinds run in array order, follow the same continuation rules, and can be scoped with a tuple.
 
@@ -72,19 +72,19 @@ Headers from rules that continued before a stopping rule are still merged into i
 
 ## Context
 
-Each request gets its own context object, created before the first rule runs. Rules can read and write it. Nothing in it survives the request.
+Each request gets an ID, immutable metadata, and isolated application state. Rules can read and write application properties. Nothing survives the request.
 
 ```ts
 const setUser = defineHandler({
   name: "set-user",
   handler: (_request, _event, context) => {
-    context.set("userId", "usr_123");
+    context.userId = "usr_123";
     return next();
   },
 });
 ```
 
-The default context is a `Map<string, unknown>`. For a typed object, pass `createContext`. See the [typed context guide](guides.md#share-typed-state-between-rules).
+Type the application state with `chain<Context>(...)`; its properties are optional until set. Built-in properties include `requestId`, `startedAt`, `elapsedMs`, `originalUrl`, `originalPathname`, `originalHostname`, and the current execution's `signal`. These properties are read-only. See the [typed context guide](guides.md#share-typed-state-between-rules).
 
 Context is not the place to pass data to the browser. Use response headers or cookies for that.
 
@@ -127,7 +127,9 @@ A rule can throw. What happens next depends on `onError`:
 
 `onError` receives the error and the index of the rule that threw. Index `-1` means the error came from the engine itself, after all rules ran or while reading a rule's return value. No rule is left to continue to, so only a `Response` is honored there. `next()` or `NextResponse.next()` returns `500`.
 
-`ruleTimeoutMs` gives each rule a time limit. A rule that runs past it is treated as thrown, with a `RuleTimeoutError`. The rule function is not cancelled: it keeps running in the background, and its late result is ignored.
+Chain option `timeout` gives each handler and its predicate one shared deadline. A timeout aborts that handler's signal, stops the chain, and is reported as `RuleTimeoutError`. The engine stops waiting even when user code ignores the signal; ignored work may continue in the background.
+
+Ordinary errors may recover with a response or continue with `next()`. Timeout and request-cancellation recovery accepts only a terminal response. Without timeout recovery, the chain fails closed with `500`. Without cancellation recovery, it returns `NextResponse.next()` as the framework handoff. Recovery runs with a separate signal and context view.
 
 When a rule continues after `onError` returns `next()`, that rule's own result is skipped, and the rules after it run as usual. Use this only when skipping the rule is safe for your application.
 

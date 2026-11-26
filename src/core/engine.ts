@@ -2,9 +2,8 @@ import type { NextFetchEvent } from "next/server";
 import { NextRequest, NextResponse } from "next/server.js";
 
 import { isNextResult } from "./actions";
-import { createProxyContext } from "./context";
+import { createApplicationState, createHandlerContext, createRequestMetadata } from "./context";
 import { cookieItemsFromHeaders, headersDiffer, responseHeaderItems } from "./headers";
-import { applyFolderPrefix, isInsideFolder, physicalFolderPrefix } from "./host-folder-prefix";
 import { createConsoleLogger } from "./logger";
 import { formatTrace, shouldUseColor, supportsUnicode } from "./diagnostics/formatter";
 import { safeDestination, safeDiagnosticText } from "./diagnostics/sanitize";
@@ -30,7 +29,13 @@ import {
   resolveRuleResult,
   safeInternalError,
 } from "./pipeline";
-import { assertFiniteRuleTimeoutMs, RuleTimeoutError, withRuleTimeout } from "./timeout";
+import {
+  assertValidTimeout,
+  RequestCancellationError,
+  RuleTimeoutError,
+  runInExecutionScope,
+  runInRecoveryScope,
+} from "./timeout";
 import type {
   ChainConfig,
   ChainLogger,
@@ -38,19 +43,13 @@ import type {
   EntryWrite,
   NextResult,
   ChainOptions,
-  ProxyContext,
   HandlerRule,
   RouteScopeInput,
   RouteScopeList,
 } from "./types";
 
 function monotonicNow(): number {
-  try {
-    if (typeof globalThis.performance?.now === "function") return globalThis.performance.now();
-  } catch {
-    // Some edge runtimes expose performance but reject access to it.
-  }
-  return Date.now();
+  return performance.now();
 }
 
 function normalizeDebugLevel(level: DebugLevel): NormalizedDebugLevel {
@@ -100,7 +99,7 @@ function scopeNames(scopeList: RouteScopeList | undefined): string[] | undefined
   });
 }
 
-function handlerDetails<TFn, TContext>(
+function handlerDetails<TFn, TContext extends object>(
   rule: BaseHandlerRule<TFn, TContext>,
   chainTimeout: number,
   when: "matched" | "false" | "not-evaluated",
@@ -164,39 +163,34 @@ function stripRoutingOverrides(res: Response): void {
 
 type ProxyHandler = (req: NextRequest, event: NextFetchEvent) => Promise<NextResponse | Response>;
 
-function resolveConfig<TContext>(
+function resolveConfig<TContext extends object>(
   overrides: ChainOptions<TContext>,
-  fallbackCreateContext: ChainConfig<TContext>["createContext"],
 ): ChainConfig<TContext> {
-  const { logger, debug, createContext, ...rest } = overrides;
+  const { logger, debug, ...rest } = overrides;
 
   const config = {
-    createContext: createContext ?? fallbackCreateContext,
     cookieMergeStrategy: "last-write-wins",
     headerMergeStrategy: "last-write-wins",
     debug: false,
-    ruleTimeoutMs: 0,
+    timeout: 0,
     requestHeaderPolicy: {},
     strictOverrideCheck: false,
-    hostFolderHeader: undefined,
     tracePath: true,
     ...rest,
     ...(debug !== undefined ? { debug } : {}),
     logger: safeLogger(logger ?? createConsoleLogger("info")),
   } satisfies ChainConfig<TContext>;
 
-  assertFiniteRuleTimeoutMs(config.ruleTimeoutMs);
+  assertValidTimeout(config.timeout);
   return config;
 }
 
 /** Internal executor for the public chain() composition helper. */
-export function executeChain<TContext>(
+export function executeChain<TContext extends object = object>(
   options: ChainOptions<TContext>,
   entries: HandlerRule<TContext>[],
 ): ProxyHandler {
-  const fallbackCreateContext =
-    createProxyContext as unknown as ChainConfig<TContext>["createContext"];
-  const config = resolveConfig(options, fallbackCreateContext);
+  const config = resolveConfig(options);
 
   const rules = entries.map(toRule);
   const {
@@ -204,10 +198,9 @@ export function executeChain<TContext>(
     debug: debugLevel,
     cookieMergeStrategy,
     headerMergeStrategy,
-    ruleTimeoutMs,
+    timeout,
     requestHeaderPolicy,
     strictOverrideCheck,
-    hostFolderHeader,
   } = config;
   const debug = debugLevel !== false;
   const hasHandlerDebug = rules.some((rule) => rule.debug != null && rule.debug !== false);
@@ -220,11 +213,15 @@ export function executeChain<TContext>(
 
   for (let i = 0; i < rules.length; i++) {
     assertIncludeExcludeNoOverlap(rules[i]!.include, rules[i]!.exclude, ruleLabel(rules[i]!, i));
-    assertFiniteRuleTimeoutMs(rules[i]!.timeout);
+    assertValidTimeout(rules[i]!.timeout);
   }
 
   return async function proxy(req: NextRequest, event: NextFetchEvent) {
-    const startedAt = diagnosticsEnabled ? monotonicNow() : 0;
+    const startedAt = Date.now();
+    const invocationStartedAt = monotonicNow();
+    const requestId = `req_${globalThis.crypto.randomUUID()}`;
+    const metadata = createRequestMetadata(req, requestId, startedAt, invocationStartedAt);
+    const applicationState = createApplicationState();
     const diagnostics: HandlerTrace[] | null = diagnosticsEnabled ? [] : null;
     let nextHandlerIndex = 0;
     const finish = (
@@ -239,9 +236,12 @@ export function executeChain<TContext>(
         });
       }
       const trace: ChainTrace = {
+        requestId,
+        startedAt,
         method: safeDiagnosticText(req.method, 16),
-        pathname: config.tracePath === false ? undefined : safeDiagnosticText(req.nextUrl.pathname),
-        durationMs: monotonicNow() - startedAt,
+        pathname:
+          config.tracePath === false ? undefined : safeDiagnosticText(metadata.originalPathname),
+        durationMs: monotonicNow() - invocationStartedAt,
         outcome: forcedOutcome ?? responseOutcome(response),
         handlers: diagnostics,
       };
@@ -283,13 +283,8 @@ export function executeChain<TContext>(
       return response;
     };
 
-    let ctx: TContext;
-    try {
-      ctx = config.createContext(req, event);
-    } catch {
-      if (!diagnosticsEnabled) logger.error("request context creation failed");
-      return finish(safeInternalError(), { type: "error", status: 500, classification: "engine" });
-    }
+    const contextFor = (signal: AbortSignal) =>
+      createHandlerContext<TContext>(metadata, applicationState, signal);
 
     let currentReq = req;
     let pendingRequestOverrides: Headers | null = null;
@@ -310,6 +305,20 @@ export function executeChain<TContext>(
         debug,
       );
 
+    const requestCancelledResponse = () =>
+      finish(
+        finalizeResponse(
+          NextResponse.next(),
+          headerWrites,
+          cookieWrites,
+          headerMergeStrategy,
+          cookieMergeStrategy,
+          logger,
+          debug,
+        ),
+        { type: "request-cancelled" },
+      );
+
     const materializeRequest = (): NextRequest => {
       if (!pendingRequestOverrides) return currentReq;
       if (!headersDiffer(currentReq.headers, pendingRequestOverrides)) {
@@ -325,86 +334,165 @@ export function executeChain<TContext>(
       return currentReq;
     };
 
-    const appliedRequestOverrides = new Headers();
-
     const queueRequestOverrides = (overrides: Headers) => {
       if (!pendingRequestOverrides) pendingRequestOverrides = new Headers();
       const target = pendingRequestOverrides;
       overrides.forEach((v, k) => {
         target.set(k, v);
-        appliedRequestOverrides.set(k, v);
       });
     };
 
-    // Handles an error thrown by rule `i` (or while reading its return value).
-    // Returns the raw result to continue with, or the final response.
+    // Handles one failed execution without reusing its execution-scoped signal.
     const recoverRuleError = async (
       err: unknown,
       i: number,
       label: string,
       req: NextRequest,
-      startedAt: number,
+      durationMs: number,
+      phase: "before-handler" | "when" | "handler" | "result",
     ): Promise<{ raw: RuleRaw } | { response: NextResponse | Response }> => {
       const timeoutError = err instanceof RuleTimeoutError;
-      const durationMs = () => (diagnosticsEnabled ? monotonicNow() - startedAt : 0);
+      const requestCancelled = err instanceof RequestCancellationError;
       const errorHandler = rules[i]!.onError ?? config.onError;
       const errorPolicy = rules[i]!.onError ? "handler" : "chain";
-      if (!errorHandler) {
-        if (!diagnosticsEnabled) logger.error("handler failed");
+      const diagnosticPhase = phase === "before-handler" ? "handler" : phase;
+      const details = handlerDetails(rules[i]!, timeout, "matched", "matched", "not-matched");
+
+      const stopFailure = (
+        policy: "none" | "handler" | "chain",
+      ): { response: NextResponse | Response } => {
         diagnostics?.push({
           name: safeDiagnosticText(label, 64),
-          outcome: timeoutError ? "timeout" : "failed",
-          durationMs: durationMs(),
-          policy: "none",
-          details: handlerDetails(rules[i]!, ruleTimeoutMs, "matched", "matched", "not-matched"),
+          ...(requestCancelled
+            ? {
+                outcome: "request-cancelled" as const,
+                durationMs,
+                phase: phase === "result" ? ("handler" as const) : phase,
+                policy,
+              }
+            : {
+                outcome: timeoutError ? ("timeout" as const) : ("failed" as const),
+                durationMs,
+                phase: diagnosticPhase,
+                policy,
+                ...(timeoutError ? { timeoutMs: err.timeoutMs } : {}),
+              }),
+          details,
         });
         nextHandlerIndex = i + 1;
-        return {
-          response: finish(
-            failClosed(),
-            timeoutError
-              ? {
-                  type: "timeout",
-                  status: 500,
-                  timeoutMs: err instanceof RuleTimeoutError ? err.timeoutMs : ruleTimeoutMs,
-                }
-              : { type: "error", status: 500, classification: "handler" },
-          ),
-        };
-      }
-      try {
-        const recovered = await errorHandler(err, i, req, ctx);
-        if (recovered == null) {
-          diagnostics?.push({
-            name: safeDiagnosticText(label, 64),
-            outcome: timeoutError ? "timeout" : "failed",
-            durationMs: durationMs(),
-            policy: errorPolicy,
-            details: handlerDetails(rules[i]!, ruleTimeoutMs, "matched", "matched", "not-matched"),
-          });
-          nextHandlerIndex = i + 1;
+        if (requestCancelled) {
           return {
             response: finish(
-              failClosed(),
-              timeoutError
-                ? {
-                    type: "timeout",
-                    status: 500,
-                    timeoutMs: err instanceof RuleTimeoutError ? err.timeoutMs : ruleTimeoutMs,
-                  }
-                : { type: "error", status: 500, classification: "handler" },
+              finalizeResponse(
+                NextResponse.next(),
+                headerWrites,
+                cookieWrites,
+                headerMergeStrategy,
+                cookieMergeStrategy,
+                logger,
+                debug,
+              ),
+              { type: "request-cancelled" },
             ),
           };
+        }
+        if (timeoutError) {
+          return {
+            response: finish(failClosed(), {
+              type: "timeout",
+              status: 500,
+              timeoutMs: err.timeoutMs,
+            }),
+          };
+        }
+        return {
+          response: finish(failClosed(), {
+            type: "error",
+            status: 500,
+            classification: "handler",
+          }),
+        };
+      };
+
+      if (!errorHandler) {
+        if (!diagnosticsEnabled) logger.error("handler failed");
+        return stopFailure("none");
+      }
+
+      try {
+        const recovered = await runInRecoveryScope(req.signal, (signal) =>
+          errorHandler(err, i, req, contextFor(signal)),
+        );
+        if (timeoutError || requestCancelled) {
+          if (recovered instanceof Response && !isNextResponse(recovered)) {
+            stripRoutingOverrides(recovered);
+            headerWrites.push({
+              ruleIndex: i,
+              ruleName: label,
+              items: responseHeaderItems(recovered.headers),
+            });
+            cookieWrites.push({
+              ruleIndex: i,
+              ruleName: label,
+              items: cookieItemsFromHeaders(recovered.headers),
+            });
+            diagnostics?.push({
+              name: safeDiagnosticText(label, 64),
+              ...(requestCancelled
+                ? {
+                    outcome: "request-cancelled" as const,
+                    durationMs,
+                    phase: phase === "result" ? ("handler" as const) : phase,
+                    policy: errorPolicy,
+                    recovery: "response" as const,
+                  }
+                : {
+                    outcome: "timeout" as const,
+                    durationMs,
+                    phase: diagnosticPhase,
+                    policy: errorPolicy,
+                    recovery: "response" as const,
+                    timeoutMs: err.timeoutMs,
+                  }),
+              details,
+            });
+            nextHandlerIndex = i + 1;
+            return {
+              response: finish(
+                finalizeResponse(
+                  recovered,
+                  headerWrites,
+                  cookieWrites,
+                  headerMergeStrategy,
+                  cookieMergeStrategy,
+                  logger,
+                  debug,
+                ),
+                requestCancelled
+                  ? { type: "request-cancelled" }
+                  : {
+                      type: "timeout",
+                      status: recovered.status,
+                      timeoutMs: err.timeoutMs,
+                    },
+              ),
+            };
+          }
+          return stopFailure(errorPolicy);
+        }
+
+        if (recovered == null) {
+          return stopFailure(errorPolicy);
         }
         // NextResponse.next() is a Response; treat it as continuation, not a stop.
         if (isNextResult(recovered) || isNextResponse(recovered)) {
           diagnostics?.push({
             name: safeDiagnosticText(label, 64),
             outcome: "recovered",
-            durationMs: durationMs(),
+            durationMs,
             recovery: "continue",
             policy: errorPolicy,
-            details: handlerDetails(rules[i]!, ruleTimeoutMs, "matched", "matched", "not-matched"),
+            details,
           });
           nextHandlerIndex = i + 1;
           return { raw: recovered };
@@ -412,10 +500,11 @@ export function executeChain<TContext>(
         if (!(recovered instanceof Response)) {
           diagnostics?.push({
             name: safeDiagnosticText(label, 64),
-            outcome: timeoutError ? "timeout" : "failed",
-            durationMs: durationMs(),
+            outcome: "failed",
+            durationMs,
+            phase: diagnosticPhase,
             policy: errorPolicy,
-            details: handlerDetails(rules[i]!, ruleTimeoutMs, "matched", "matched", "not-matched"),
+            details,
           });
           nextHandlerIndex = i + 1;
           return {
@@ -441,7 +530,7 @@ export function executeChain<TContext>(
         diagnostics?.push({
           name: safeDiagnosticText(label, 64),
           outcome: "recovered",
-          durationMs: durationMs(),
+          durationMs,
           recovery:
             responseOutcome(recovered).type === "redirect"
               ? "redirect"
@@ -449,7 +538,7 @@ export function executeChain<TContext>(
                 ? "rewrite"
                 : "response",
           policy: errorPolicy,
-          details: handlerDetails(rules[i]!, ruleTimeoutMs, "matched", "matched", "not-matched"),
+          details,
         });
         nextHandlerIndex = i + 1;
         return {
@@ -467,21 +556,7 @@ export function executeChain<TContext>(
         };
       } catch {
         if (!diagnosticsEnabled) logger.error("chain error handler failed");
-        diagnostics?.push({
-          name: safeDiagnosticText(label, 64),
-          outcome: timeoutError ? "timeout" : "failed",
-          durationMs: durationMs(),
-          policy: errorPolicy,
-          details: handlerDetails(rules[i]!, ruleTimeoutMs, "matched", "matched", "not-matched"),
-        });
-        nextHandlerIndex = i + 1;
-        return {
-          response: finish(failClosed(), {
-            type: "error",
-            status: 500,
-            classification: "handler",
-          }),
-        };
+        return stopFailure(errorPolicy);
       }
     };
 
@@ -489,6 +564,19 @@ export function executeChain<TContext>(
       for (let i = 0; i < rules.length; i++) {
         const rule = rules[i]!;
         const label = ruleLabel(rule, i);
+        nextHandlerIndex = i;
+        if (req.signal.aborted) {
+          const cancelled = await recoverRuleError(
+            new RequestCancellationError(),
+            i,
+            label,
+            materializeRequest(),
+            0,
+            "before-handler",
+          );
+          if ("response" in cancelled) return cancelled.response;
+          return requestCancelledResponse();
+        }
         const activeReq = materializeRequest();
 
         const reqHost = normalizeHost(
@@ -504,7 +592,6 @@ export function executeChain<TContext>(
             }),
           );
         }
-        nextHandlerIndex = i;
         const skipReason = ruleMatchReason(matchPath, reqHost, rule);
         if (skipReason) {
           diagnostics?.push({
@@ -513,7 +600,7 @@ export function executeChain<TContext>(
             reason: skipReason,
             details: handlerDetails(
               rule,
-              ruleTimeoutMs,
+              timeout,
               "not-evaluated",
               skipReason === "include-mismatch" ? "mismatch" : undefined,
               skipReason === "exclude-match"
@@ -527,46 +614,63 @@ export function executeChain<TContext>(
           continue;
         }
 
-        const startedAt = diagnosticsEnabled ? monotonicNow() : 0;
-        let raw: RuleRaw;
+        const executionStartedAt = monotonicNow();
+        const effectiveTimeout = rule.timeout ?? timeout;
+        let phase: "when" | "handler" = rule.when ? "when" : "handler";
+        let result: { kind: "skipped" } | { kind: "result"; raw: RuleRaw };
         try {
-          const result = await withRuleTimeout(
-            (async () => {
-              if (rule.when && !(await rule.when(activeReq, event, ctx))) {
+          result = await runInExecutionScope(
+            req.signal,
+            effectiveTimeout,
+            label,
+            async (signal) => {
+              const context = contextFor(signal);
+              if (rule.when && !(await rule.when(activeReq, event, context))) {
                 return { kind: "skipped" as const };
               }
-              return { kind: "result" as const, raw: await rule.run(activeReq, ctx, event) };
-            })(),
-            rule.timeout ?? ruleTimeoutMs,
-            label,
+              phase = "handler";
+              if (signal.aborted) throw new RequestCancellationError();
+              return {
+                kind: "result" as const,
+                raw: await rule.run(activeReq, context, event),
+              };
+            },
           );
           if (result.kind === "skipped") {
             diagnostics?.push({
               name: safeDiagnosticText(label, 64),
               outcome: "skipped",
               reason: "when-false",
-              details: handlerDetails(rule, ruleTimeoutMs, "false", "matched", "not-matched"),
+              details: handlerDetails(rule, timeout, "false", "matched", "not-matched"),
             });
             nextHandlerIndex = i + 1;
             continue;
           }
-          raw = result.raw;
         } catch (err) {
-          const recovered = await recoverRuleError(err, i, label, activeReq, startedAt);
+          const recovered = await recoverRuleError(
+            err,
+            i,
+            label,
+            activeReq,
+            monotonicNow() - executionStartedAt,
+            phase,
+          );
           if ("response" in recovered) return recovered.response;
-          raw = recovered.raw;
+          result = { kind: "result", raw: recovered.raw };
         }
 
+        let raw = result.raw;
+        let duration = monotonicNow() - executionStartedAt;
         // A malformed return value is attributed to this rule, like a thrown error.
         let outcome: ResolvedOutcome;
         try {
           outcome = resolveRuleResult(raw, requestHeaderPolicy, logger, debug);
         } catch (err) {
-          const recovered = await recoverRuleError(err, i, label, activeReq, startedAt);
+          const recovered = await recoverRuleError(err, i, label, activeReq, duration, "result");
           if ("response" in recovered) return recovered.response;
-          outcome = resolveRuleResult(recovered.raw, requestHeaderPolicy, logger, debug);
+          raw = recovered.raw;
+          outcome = resolveRuleResult(raw, requestHeaderPolicy, logger, debug);
         }
-        const duration = diagnosticsEnabled ? monotonicNow() - startedAt : 0;
 
         if (outcome.kind === "continue") {
           if (outcome.rewriteUrl) {
@@ -599,13 +703,7 @@ export function executeChain<TContext>(
                     durationMs: duration,
                     destination: safeDestination(outcome.rewriteUrl) ?? "/",
                     final: false,
-                    details: handlerDetails(
-                      rule,
-                      ruleTimeoutMs,
-                      "matched",
-                      "matched",
-                      "not-matched",
-                    ),
+                    details: handlerDetails(rule, timeout, "matched", "matched", "not-matched"),
                   }
                 : {
                     name: safeDiagnosticText(label, 64),
@@ -616,13 +714,7 @@ export function executeChain<TContext>(
                         ? "NextResponse.next()"
                         : "undefined",
                     durationMs: duration,
-                    details: handlerDetails(
-                      rule,
-                      ruleTimeoutMs,
-                      "matched",
-                      "matched",
-                      "not-matched",
-                    ),
+                    details: handlerDetails(rule, timeout, "matched", "matched", "not-matched"),
                   },
             );
           }
@@ -651,7 +743,7 @@ export function executeChain<TContext>(
                 durationMs: duration,
                 status: terminalOutcome.status,
                 destination: terminalOutcome.destination,
-                details: handlerDetails(rule, ruleTimeoutMs, "matched", "matched", "not-matched"),
+                details: handlerDetails(rule, timeout, "matched", "matched", "not-matched"),
               }
             : terminalOutcome.type === "rewrite"
               ? {
@@ -660,29 +752,17 @@ export function executeChain<TContext>(
                   durationMs: duration,
                   destination: terminalOutcome.destination,
                   final: true,
-                  details: handlerDetails(rule, ruleTimeoutMs, "matched", "matched", "not-matched"),
+                  details: handlerDetails(rule, timeout, "matched", "matched", "not-matched"),
                 }
               : {
                   name: safeDiagnosticText(label, 64),
                   outcome: "response",
                   durationMs: duration,
                   status: outcome.response.status,
-                  details: handlerDetails(rule, ruleTimeoutMs, "matched", "matched", "not-matched"),
+                  details: handlerDetails(rule, timeout, "matched", "matched", "not-matched"),
                 },
         );
         nextHandlerIndex = i + 1;
-
-        const internalFolder = hostFolderHeader
-          ? appliedRequestOverrides.get(hostFolderHeader)
-          : null;
-        if (internalFolder && outcome.response.headers.has("x-middleware-rewrite")) {
-          const rawRewrite = outcome.response.headers.get("x-middleware-rewrite")!;
-          const cleanFolder = physicalFolderPrefix(internalFolder);
-          outcome.response.headers.set(
-            "x-middleware-rewrite",
-            applyFolderPrefix(rawRewrite, cleanFolder, currentReq.url),
-          );
-        }
 
         const finalTerminalOutcome = responseOutcome(outcome.response);
         const terminalTrace = diagnostics?.at(-1);
@@ -705,26 +785,7 @@ export function executeChain<TContext>(
       }
 
       const finalReq = materializeRequest();
-      const internalHostFolder = hostFolderHeader
-        ? appliedRequestOverrides.get(hostFolderHeader)
-        : null;
-
-      let finalRewriteUrl: string | null = pendingRewriteUrl;
-
-      if (internalHostFolder) {
-        const cleanFolder = physicalFolderPrefix(internalHostFolder);
-
-        if (finalRewriteUrl) {
-          finalRewriteUrl = applyFolderPrefix(finalRewriteUrl, cleanFolder, finalReq.url);
-        } else {
-          const currentPath = finalReq.nextUrl.pathname;
-          if (!isInsideFolder(currentPath, cleanFolder)) {
-            const targetUrl = finalReq.nextUrl.clone();
-            targetUrl.pathname = cleanFolder + (currentPath === "/" ? "" : currentPath);
-            finalRewriteUrl = targetUrl.toString();
-          }
-        }
-      }
+      const finalRewriteUrl: string | null = pendingRewriteUrl;
 
       // Forwarding unchanged headers would encode every request header as x-middleware-request-*.
       const requestInit = finalReq !== req ? { request: { headers: finalReq.headers } } : undefined;
@@ -758,7 +819,9 @@ export function executeChain<TContext>(
       if (!diagnosticsEnabled) logger.error("proxy chain execution failed");
       if (config.onError) {
         try {
-          const recovered = await config.onError(err, -1, materializeRequest(), ctx);
+          const recovered = await runInRecoveryScope(req.signal, (signal) =>
+            config.onError!(err, -1, materializeRequest(), contextFor(signal)),
+          );
           // No later rule can run here, so a continuation response would skip them. Fail closed.
           if (recovered instanceof Response && !isNextResponse(recovered)) {
             stripRoutingOverrides(recovered);

@@ -1,5 +1,6 @@
 import type { NextFetchEvent, NextRequest } from "next/server";
-import type { NextResult, OnErrorHandler, ProxyContext } from "../types";
+import type { HandlerContext } from "../context";
+import type { NextResult, OnErrorHandler } from "../types";
 
 export type DebugLevel = false | true | "compact" | "detailed" | "verbose";
 export type NormalizedDebugLevel = false | "compact" | "detailed" | "verbose";
@@ -57,6 +58,16 @@ export type HandlerTrace =
       outcome: "failed" | "timeout";
       durationMs: number;
       policy: "none" | "handler" | "chain";
+      phase?: "when" | "handler" | "result" | "recovery";
+      recovery?: "response";
+      timeoutMs?: number;
+    })
+  | (NamedHandler & {
+      outcome: "request-cancelled";
+      durationMs: number;
+      phase: "before-handler" | "when" | "handler";
+      policy: "none" | "handler" | "chain";
+      recovery?: "response";
     });
 
 export type ChainOutcome =
@@ -65,9 +76,12 @@ export type ChainOutcome =
   | { type: "redirect"; status: number; destination?: string }
   | { type: "response"; status: number }
   | { type: "error"; status: number; classification: "handler" | "engine" }
-  | { type: "timeout"; status: number; timeoutMs: number };
+  | { type: "timeout"; status: number; timeoutMs: number }
+  | { type: "request-cancelled" };
 
 export type ChainTrace = {
+  requestId: string;
+  startedAt: number;
   method: string;
   pathname?: string;
   durationMs: number;
@@ -77,13 +91,13 @@ export type ChainTrace = {
 
 export type TraceCallback = (trace: ChainTrace) => void | Promise<void>;
 
-export type HandlerWhen<TContext = ProxyContext> = (
+export type HandlerWhen<TContext extends object = object> = (
   request: NextRequest,
   event: NextFetchEvent,
-  context: TContext,
+  context: HandlerContext<TContext>,
 ) => boolean | Promise<boolean>;
 
-export type HandlerDebugOptions<TContext = ProxyContext> = {
+export type HandlerDebugOptions<TContext extends object = object> = {
   name?: string;
   debug?: DebugLevel;
   timeout?: number;
@@ -96,6 +110,6 @@ export type HandlerDebugOptions<TContext = ProxyContext> = {
   handler: (
     request: NextRequest,
     event: NextFetchEvent,
-    context: TContext,
+    context: HandlerContext<TContext>,
   ) => Response | NextResult | undefined | void | Promise<Response | NextResult | undefined | void>;
 };

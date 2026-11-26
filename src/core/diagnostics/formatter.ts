@@ -57,6 +57,8 @@ function handlerLabel(handler: HandlerTrace): { symbol: string; text: string; co
       return { symbol: "!", text: "recovered", color: 33 };
     case "timeout":
       return { symbol: "×", text: "timeout", color: 31 };
+    case "request-cancelled":
+      return { symbol: "⊘", text: "request cancelled", color: 33 };
     case "failed":
       return { symbol: "×", text: "failed", color: 31 };
   }
@@ -76,6 +78,8 @@ function outcomeText(outcome: ChainOutcome): string {
       return `ERROR ${outcome.status}`;
     case "timeout":
       return `ERROR ${outcome.status} · timeout ${outcome.timeoutMs}ms`;
+    case "request-cancelled":
+      return "REQUEST CANCELLED";
   }
 }
 
@@ -90,6 +94,8 @@ function outcomeColor(outcome: ChainOutcome): number {
     case "error":
     case "timeout":
       return 31;
+    case "request-cancelled":
+      return 33;
     case "response":
       return outcome.status >= 500 ? 31 : 32;
   }
@@ -102,18 +108,16 @@ export function formatTrace(
   unicode = true,
 ): string {
   const path = trace.pathname ? ` ${safeDiagnosticText(trace.pathname)}` : "";
-  const header = `proxy-chain ${safeDiagnosticText(trace.method)}${path}`;
+  const header = `[proxy-chain] ${safeDiagnosticText(trace.method)}${path}`;
   const rows: string[] = [];
   const handlers = trace.handlers;
   if (level === "compact") {
-    const executed = handlers.filter(
-      (handler) => handler.outcome !== "skipped" && handler.outcome !== "not-reached",
-    ).length;
-    const skipped = handlers.filter((handler) => handler.outcome === "skipped").length;
-    return `${header} ${unicode ? "→" : "->"} ${paint(outcomeText(trace.outcome), outcomeColor(trace.outcome), color)} · ${executed} executed · ${skipped} skipped · ${paint(duration(trace.durationMs), 2, color)}`;
+    const reached = handlers.filter((handler) => handler.outcome !== "not-reached").length;
+    return `[proxy-chain] ${safeDiagnosticText(trace.requestId)} · ${safeDiagnosticText(trace.method)}${path} · ${paint(outcomeText(trace.outcome), outcomeColor(trace.outcome), color)} · ${paint(duration(trace.durationMs), 2, color)} · ${reached}/${handlers.length} handlers`;
   }
 
-  rows.push(`${header.padEnd(52)} ${duration(trace.durationMs)}`);
+  rows.push(header);
+  rows.push(`  Request: ${safeDiagnosticText(trace.requestId, 64)}`);
   const shown = handlers;
   const symbols = unicode
     ? {
@@ -125,6 +129,7 @@ export function formatTrace(
         skip: "○",
         missing: "–",
         error: "×",
+        cancelled: "⊘",
         recovered: "!",
       }
     : {
@@ -136,6 +141,7 @@ export function formatTrace(
         skip: "o",
         missing: "-",
         error: "x",
+        cancelled: "!",
         recovered: "!",
       };
 
@@ -155,7 +161,9 @@ export function formatTrace(
                 ? symbols.missing
                 : handler.outcome === "recovered"
                   ? symbols.recovered
-                  : symbols.error;
+                  : handler.outcome === "request-cancelled"
+                    ? symbols.cancelled
+                    : symbols.error;
     const prefix = symbols.pass;
     const name = safeDiagnosticText(handler.name, 32);
     const time = "durationMs" in handler ? paint(duration(handler.durationMs), 2, color) : "";
@@ -195,18 +203,22 @@ export function formatTrace(
     if (
       handler.outcome === "recovered" ||
       handler.outcome === "failed" ||
-      handler.outcome === "timeout"
+      handler.outcome === "timeout" ||
+      handler.outcome === "request-cancelled"
     ) {
       const policy = handler.policy === "none" ? "chain default" : handler.policy;
-      rows.push(`${symbols.pass}   error policy: ${policy}`);
+      rows.push(
+        `${symbols.pass}   ${handler.outcome === "request-cancelled" ? "cancellation policy" : "error policy"}: ${policy}`,
+      );
     }
-    if (handler.outcome === "timeout" && handler.details?.timeoutMs !== undefined) {
-      rows.push(`${symbols.pass}   deadline: ${handler.details.timeoutMs}ms`);
+    if (handler.outcome === "timeout" && handler.timeoutMs !== undefined) {
+      rows.push(`${symbols.pass}   deadline: ${handler.timeoutMs}ms`);
     }
   }
   rows.push(
     `${symbols.last} ${paint(outcomeText(trace.outcome), outcomeColor(trace.outcome), color)}`,
   );
+  rows.push(`  Total: ${paint(duration(trace.durationMs), 2, color)}`);
   const output = rows.join("\n");
   if (output.length <= 16_384) return output;
   const safeBoundary = output.lastIndexOf("\n", 16_384);

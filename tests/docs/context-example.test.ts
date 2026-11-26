@@ -3,12 +3,13 @@ import { NextRequest } from "next/server";
 import contextExample from "../../examples/09-context";
 
 describe("README context example", () => {
-  it("uses the incoming request id", async () => {
+  it("creates a request id independent of incoming headers", async () => {
     const res = await contextExample(
       new NextRequest("http://localhost/", { headers: { "x-request-id": "abc" } }),
       {} as never,
     );
-    expect(res.headers.get("x-request-id")).toBe("abc");
+    expect(res.headers.get("x-request-id")).toMatch(/^req_[0-9a-f-]{36}$/i);
+    expect(res.headers.get("x-request-id")).not.toBe("abc");
   });
 
   it("generates a request id when none is sent, and does not reuse it across requests", async () => {

@@ -4,7 +4,6 @@ import type {
   HostMatcher,
   PathMatcher,
   HandlerFilter,
-  ProxyContext,
   RouteScopeList,
 } from "./types";
 
@@ -170,7 +169,7 @@ function scopeMatches(pathname: string, hostname: string | null, scope: Compiled
   return true;
 }
 
-export function toRule<TFn, TContext = ProxyContext>(
+export function toRule<TFn, TContext extends object = object>(
   entry: TFn | BaseHandlerRule<TFn, TContext>,
 ): BaseHandlerRule<TFn, TContext> {
   if (typeof entry === "function") {
@@ -207,7 +206,7 @@ export function toRule<TFn, TContext = ProxyContext>(
   };
 }
 
-export function ruleLabel<TFn, TContext = ProxyContext>(
+export function ruleLabel<TFn, TContext extends object = object>(
   rule: BaseHandlerRule<TFn, TContext>,
   index: number,
 ): string {
@@ -221,7 +220,7 @@ export function ruleLabel<TFn, TContext = ProxyContext>(
 /**
  * Decorates a proxy entry with declarative path and host inclusion/exclusion filters.
  */
-export function withPaths<TFn, TContext = ProxyContext>(
+export function withPaths<TFn, TContext extends object = object>(
   entry: TFn | BaseHandlerRule<TFn, TContext>,
   filter: HandlerFilter,
 ): BaseHandlerRule<TFn, TContext> {
@@ -245,7 +244,7 @@ export function withPaths<TFn, TContext = ProxyContext>(
 /**
  * Determines whether a given request matches a rule's scoping constraints.
  */
-export function ruleMatches<TFn, TContext = ProxyContext>(
+export function ruleMatches<TFn, TContext extends object = object>(
   pathname: string,
   hostname: string | null,
   rule: BaseHandlerRule<TFn, TContext>,
@@ -257,7 +256,7 @@ export function ruleMatches<TFn, TContext = ProxyContext>(
   return true;
 }
 
-export function ruleMatchReason<TFn, TContext = ProxyContext>(
+export function ruleMatchReason<TFn, TContext extends object = object>(
   pathname: string,
   hostname: string | null,
   rule: BaseHandlerRule<TFn, TContext>,
@@ -271,7 +270,7 @@ export function ruleMatchReason<TFn, TContext = ProxyContext>(
   return undefined;
 }
 
-export function pathMatches<TFn, TContext = ProxyContext>(
+export function pathMatches<TFn, TContext extends object = object>(
   pathname: string,
   rule: BaseHandlerRule<TFn, TContext>,
 ): boolean {

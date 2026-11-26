@@ -22,7 +22,7 @@ export type RequestMetadata = {
   readonly originalHostname: string;
 };
 
-export type HandlerContext<TContext extends object = {}> = RequestMetadata &
+export type HandlerContext<TContext extends object = object> = RequestMetadata &
   Omit<Partial<TContext>, keyof RequestMetadata | "signal"> & {
     readonly signal: AbortSignal;
   };
@@ -136,8 +136,8 @@ handlers remain the way to implement application-specific routing.
 
 ## Timeout option migration
 
-The current implementation uses chain option `ruleTimeoutMs`. The requested v2
-API standardizes this as `timeout`, matching the existing handler-level option.
+The v1 implementation used chain option `ruleTimeoutMs`. The v2 API standardizes
+this as `timeout`, matching the existing handler-level option.
 The v2 major release removes `ruleTimeoutMs`; it is not retained as an alias.
 
 ## Runtime and verification boundary

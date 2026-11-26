@@ -1,5 +1,6 @@
 import type { NextFetchEvent, NextRequest, NextResponse } from "next/server";
 import { NEXT } from "./constants";
+import type { HandlerContext } from "./context";
 import type { DebugLevel, HandlerWhen, TraceCallback } from "./diagnostics/types";
 
 /**
@@ -16,12 +17,6 @@ export type NextOptions = {
  * Continuation token indicating the pipeline should proceed to subsequent rules.
  */
 export type NextResult = NextOptions & { readonly [NEXT]: true };
-
-/**
- * Shared state for an individual request pipeline execution.
- * Backed by Map to eliminate prototype-pollution risks.
- */
-export type ProxyContext = Map<string, unknown>;
 
 export type ProxyResult<TResponse = NextResponse | Response> =
   | TResponse
@@ -55,7 +50,7 @@ export type CompiledScope = {
   path?: RegExp;
 };
 
-export interface BaseHandlerRule<TFn, TContext = ProxyContext> {
+export interface BaseHandlerRule<TFn, TContext extends object = object> {
   run: TFn;
   include?: CompiledScope[];
   exclude?: CompiledScope[];
@@ -79,11 +74,11 @@ export type HandlerFilter = {
 /**
  * A native Next.js proxy handler: `(request, event)`. Use it in chain() without any wrapper.
  */
-export type NativeProxy<TContext = ProxyContext> = (
+export type NativeProxy<TContext extends object = object> = (
   req: NextRequest,
   event: NextFetchEvent,
-  /** Request context from createContext. Next.js never passes it; chain() does, as the third argument. */
-  context: TContext,
+  /** Request context added by chain(); Next.js continues to pass its native event unchanged. */
+  context: HandlerContext<TContext>,
 ) =>
   | NextResponse
   | Response
@@ -95,9 +90,9 @@ export type NativeProxy<TContext = ProxyContext> = (
 /**
  * A single proxy execution function.
  */
-export type HandlerFn<TContext = ProxyContext> = (
+export type HandlerFn<TContext extends object = object> = (
   req: NextRequest,
-  ctx: TContext,
+  ctx: HandlerContext<TContext>,
   event: NextFetchEvent,
 ) =>
   | NextResponse
@@ -107,7 +102,10 @@ export type HandlerFn<TContext = ProxyContext> = (
   | void
   | Promise<NextResponse | Response | NextResult | undefined | void>;
 
-export type HandlerRule<TContext = ProxyContext> = BaseHandlerRule<HandlerFn<TContext>, TContext>;
+export type HandlerRule<TContext extends object = object> = BaseHandlerRule<
+  HandlerFn<TContext>,
+  TContext
+>;
 
 export type MergeStrategy =
   | "last-write-wins"
@@ -138,25 +136,24 @@ export interface RequestHeaderPolicy {
  * Value returned from `onError`.
  *
  * - `Response` — stop the pipeline and return it
- * - `NextResult` (`next()`) — continue to the next rule (rule-level errors only)
+ * - `NextResult` (`next()`) — continue after an ordinary rule error only
  * - `undefined` / `void` / `null` — fail closed (`500`)
  */
 export type OnErrorResult = NextResponse | Response | NextResult | undefined | void | null;
 
-export type OnErrorHandler<TContext = ProxyContext> = (
+export type OnErrorHandler<TContext extends object = object> = (
   err: unknown,
   /**
    * 0-based index of the rule that threw.
-   * `-1` means the error originated in the pipeline engine after context creation.
+   * `-1` means the error originated in the pipeline engine.
    * Engine-level errors cannot continue; only a `Response` is honored.
    */
   ruleIndex: number,
   req: NextRequest,
-  ctx: TContext,
+  ctx: HandlerContext<TContext>,
 ) => OnErrorResult | Promise<OnErrorResult>;
 
-export interface ChainConfig<TContext = ProxyContext> {
-  createContext: (req: NextRequest, event: NextFetchEvent) => TContext;
+export interface ChainConfig<TContext extends object = object> {
   cookieMergeStrategy: MergeStrategy;
   /**
    * How conflicting **response** headers from different rules are resolved.
@@ -168,16 +165,11 @@ export interface ChainConfig<TContext = ProxyContext> {
   logger: ChainLogger;
   onTrace?: TraceCallback;
   tracePath?: boolean;
-  /** Maximum wall-clock execution time per rule in milliseconds. 0 disables timeout. */
-  ruleTimeoutMs: number;
+  /** Maximum execution time per handler, including its predicate, in milliseconds. 0 disables timeout. */
+  timeout: number;
   requestHeaderPolicy: RequestHeaderPolicy;
   /** Throw an error on startup if the runtime platform does not support request header overrides. */
   strictOverrideCheck?: boolean;
-  /**
-   * Request header name that prefixes rewrites with a physical host folder
-   * (multi-tenant `app/(sites)/shop` layouts). Unset = disabled.
-   */
-  hostFolderHeader?: string;
 }
 
-export type ChainOptions<TContext = ProxyContext> = Partial<ChainConfig<TContext>>;
+export type ChainOptions<TContext extends object = object> = Partial<ChainConfig<TContext>>;

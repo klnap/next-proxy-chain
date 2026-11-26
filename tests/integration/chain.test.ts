@@ -12,10 +12,11 @@ describe("Proxy Chain Pipeline Integration", () => {
   });
 
   it("threads isolated context and propagates mutated headers between sequential rules", async () => {
-    const authRule = defineHandler({
+    type Context = { userId?: string };
+    const authRule = defineHandler<Context>({
       name: "auth",
       handler: (_req, _event, ctx) => {
-        ctx.set("userId", "usr_9921");
+        ctx.userId = "usr_9921";
         return next({
           request: { "x-user-id": "usr_9921" },
           headers: { "x-auth-applied": "true" },
@@ -23,10 +24,10 @@ describe("Proxy Chain Pipeline Integration", () => {
       },
     });
 
-    const enrichRule = defineHandler({
+    const enrichRule = defineHandler<Context>({
       name: "enrich",
       handler: (req, _event, ctx) => {
-        expect(ctx.get("userId")).toBe("usr_9921");
+        expect(ctx.userId).toBe("usr_9921");
         expect(req.headers.get("x-user-id")).toBe("usr_9921");
         return next({
           headers: { "x-enrich-applied": "true" },
@@ -34,7 +35,7 @@ describe("Proxy Chain Pipeline Integration", () => {
       },
     });
 
-    const chain = composeChain([authRule, enrichRule]);
+    const chain = composeChain<Context>([authRule, enrichRule]);
     const req = new NextRequest("http://localhost:3000/");
     const res = await chain(req, fakeEvent);
 
@@ -102,20 +103,6 @@ describe("Proxy Chain Pipeline Integration", () => {
     });
 
     const chain = composeChain([failingRule], { logger: silentLogger });
-    const req = new NextRequest("http://localhost:3000/");
-    const res = await chain(req, fakeEvent);
-    expect(res.status).toBe(500);
-  });
-
-  it("handles createContext exceptions gracefully with safe 500 status", async () => {
-    const normalRule = defineHandler({ name: "normal", handler: () => next() });
-    const chain = composeChain([normalRule], {
-      logger: silentLogger,
-      createContext: () => {
-        throw new Error("context init failed");
-      },
-    });
-
     const req = new NextRequest("http://localhost:3000/");
     const res = await chain(req, fakeEvent);
     expect(res.status).toBe(500);
@@ -307,16 +294,16 @@ describe("Proxy Chain Pipeline Integration", () => {
     );
   });
 
-  it("uses createContext as the runtime context type", async () => {
-    type Ctx = { user: string };
+  it("uses isolated mutable application state with a typed context", async () => {
+    type Ctx = { user?: string };
     const rule = defineHandler<Ctx>({
       name: "typed",
       handler: (_req, _event, ctx) => {
-        expect(ctx.user).toBe("ada");
+        ctx.user = "ada";
         return next({ headers: { "x-user": ctx.user } });
       },
     });
-    const chain = composeChain([rule], { createContext: (): Ctx => ({ user: "ada" }) });
+    const chain = composeChain<Ctx>([rule]);
     const res = await chain(new NextRequest("http://localhost:3000/"), fakeEvent);
     expect(res.headers.get("x-user")).toBe("ada");
   });

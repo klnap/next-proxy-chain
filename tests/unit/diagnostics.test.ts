@@ -8,6 +8,8 @@ import { chain as composeChain, defineHandler, next } from "../../src/index";
 describe("diagnostic formatting", () => {
   it("formats compact traces as one readable line", () => {
     const trace: ChainTrace = {
+      requestId: "req_test",
+      startedAt: 1,
       method: "GET",
       pathname: "/work",
       durationMs: 1.48,
@@ -23,7 +25,7 @@ describe("diagnostic formatting", () => {
       ],
     };
     const output = formatTrace(trace, "compact", false, true);
-    expect(output).toBe("proxy-chain GET /work → NEXT · 1 executed · 1 skipped · 1.48ms");
+    expect(output).toBe("[proxy-chain] req_test · GET /work · NEXT · 1.48ms · 2/2 handlers");
     expect(output).not.toContain("\n");
   });
 
@@ -34,6 +36,8 @@ describe("diagnostic formatting", () => {
 
   it("formats rule skips separately from handlers that were not reached", () => {
     const trace: ChainTrace = {
+      requestId: "req_test",
+      startedAt: 1,
       method: "GET",
       pathname: "/dashboard",
       durationMs: 2,
@@ -57,6 +61,8 @@ describe("diagnostic formatting", () => {
 
   it("shows handler match results and effective timeout in verbose output", () => {
     const trace: ChainTrace = {
+      requestId: "req_test",
+      startedAt: 1,
       method: "GET",
       durationMs: 2,
       outcome: { type: "next" },
@@ -123,6 +129,8 @@ describe("diagnostic formatting", () => {
     else process.env.LANG = oldLang;
 
     const trace: ChainTrace = {
+      requestId: "req_test",
+      startedAt: 1,
       method: "GET",
       pathname: "/work",
       durationMs: 1,
@@ -135,7 +143,7 @@ describe("diagnostic formatting", () => {
       })),
     };
     const output = formatTrace(trace, "detailed", false, false);
-    expect(output).toContain("proxy-chain GET /work");
+    expect(output).toContain("[proxy-chain] GET /work");
     expect(output).toContain("diagnostics truncated");
     expect(output.length).toBeLessThan(16_500);
     expect(output).not.toContain("│");
@@ -254,7 +262,7 @@ describe("chain structured diagnostics", () => {
     );
     await proxy(new NextRequest("https://example.com/work"), {} as never);
     expect(messages).toHaveLength(1);
-    expect(messages[0]).toContain("2 executed");
+    expect(messages[0]).toContain("2/2 handlers");
   });
 
   it("normalizes debug true to detailed output", async () => {
@@ -411,7 +419,7 @@ describe("chain structured diagnostics", () => {
     expect(JSON.stringify(trace)).not.toContain("private error");
   });
 
-  it("includes asynchronous error recovery in handler duration", async () => {
+  it("excludes asynchronous error recovery from handler duration", async () => {
     let trace: ChainTrace | undefined;
     const proxy = composeChain(
       [
@@ -434,18 +442,22 @@ describe("chain structured diagnostics", () => {
     const handlerTrace = trace?.handlers[0];
     expect(handlerTrace?.outcome).toBe("recovered");
     if (handlerTrace?.outcome === "recovered") {
-      expect(handlerTrace.durationMs).toBeGreaterThanOrEqual(20);
+      expect(handlerTrace.durationMs).toBeLessThan(20);
     }
   });
 
-  it("reports timeout without claiming the handler was cancelled", async () => {
+  it("reports timeout and aborts the handler signal", async () => {
     let trace: ChainTrace | undefined;
+    let signal: AbortSignal | undefined;
     const proxy = composeChain(
       [
         defineHandler({
           name: "session",
           timeout: 2,
-          handler: () => new Promise<Response>(() => {}),
+          handler: (_request, _event, context) => {
+            signal = context.signal;
+            return new Promise<Response>(() => {});
+          },
         }),
       ],
       {
@@ -461,6 +473,7 @@ describe("chain structured diagnostics", () => {
     );
     expect(trace?.outcome.type).toBe("timeout");
     expect(trace?.handlers[0]?.outcome).toBe("timeout");
+    expect(signal?.aborted).toBe(true);
   });
 
   it("keeps concurrent request traces isolated and can omit paths", async () => {

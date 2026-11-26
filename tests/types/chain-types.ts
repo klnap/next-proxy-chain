@@ -20,24 +20,16 @@ export const scoped = composeChain([
   [(_req: NextRequest) => undefined, { include: path("/x/*"), exclude: "/x/login" }],
 ]);
 
-// Positive: a typed context rule with the matching createContext.
+// Positive: a typed context rule has optional application state.
 type Ctx = { user: string };
 const withUser = defineHandler<Ctx>({
   name: "user",
   handler: (_req, _event, ctx) => {
-    const name: string = ctx.user;
-    return next({ headers: { "x-user": name } });
+    const name: string | undefined = ctx.user;
+    return next({ headers: { "x-user": name ?? "" } });
   },
 });
-export const typed = composeChain([withUser], { createContext: (): Ctx => ({ user: "ada" }) });
-
-// Negative: a typed context rule without createContext.
-// @ts-expect-error context type Ctx is not provided
-export const missingContext = composeChain([withUser]);
-
-// Negative: createContext returns a type the rule does not accept.
-// @ts-expect-error rule needs Ctx, createContext gives a different shape
-export const wrongContext = composeChain([withUser], { createContext: () => ({ other: 1 }) });
+export const typed = composeChain<Ctx>([withUser]);
 
 // Negative: unknown option.
 // @ts-expect-error unknown option
@@ -52,30 +44,17 @@ export const badScope = composeChain([[(_req: NextRequest) => undefined, 42]]);
 export const badReturn = composeChain([(_req: NextRequest, _event: NextFetchEvent) => "continue"]);
 
 // Positive: a native handler receives the typed context as its third argument.
-export const nativeWithContext = composeChain(
-  [
-    (_req, _event, ctx) => {
-      const user: string = ctx.user;
-      return next({ headers: { "x-user": user } });
-    },
-  ],
-  { createContext: (): Ctx => ({ user: "ada" }) },
-);
-
-// Negative: a native handler that declares a different context type.
-// @ts-expect-error handler expects a number where createContext gives a string
-export const wrongNativeContext = composeChain(
-  [(_req: NextRequest, _event: NextFetchEvent, _ctx: { user: number }) => undefined],
-  { createContext: (): Ctx => ({ user: "ada" }) },
-);
+export const nativeWithContext = composeChain<Ctx>([
+  (_req, _event, ctx) => {
+    const user: string | undefined = ctx.user;
+    return next({ headers: { "x-user": user ?? "" } });
+  },
+]);
 
 void nativeWithContext;
-void wrongNativeContext;
 void native;
 void scoped;
 void typed;
-void missingContext;
-void wrongContext;
 void badOption;
 void badScope;
 void badReturn;

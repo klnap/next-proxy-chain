@@ -33,14 +33,11 @@ const requireUser = defineHandler<Session>({
   },
 });
 
-export default composeChain(
-  [
-    localeRedirect,
-    analytics,
-    // Rules run in array order. The session must be read before a rule uses it.
-    readSession,
-    // Scoped tuple: the rule runs only for these paths.
-    [requireUser, "/dashboard/**"],
-  ],
-  { createContext: (): Session => ({}) },
-);
+export default composeChain<Session>([
+  localeRedirect,
+  analytics,
+  // Rules run in array order. The session must be read before a rule uses it.
+  readSession,
+  // Scoped tuple: the rule runs only for these paths.
+  [requireUser, "/dashboard/**"],
+]);

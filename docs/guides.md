@@ -74,18 +74,10 @@ export default chain([securityHeaders, [requireSession, { include: path("/dashbo
 
 ## Share typed state between rules
 
-Pass `createContext` to type the context. Each request gets a new object.
+Pass an application context type to `chain`. Its properties are optional until set and isolated per request. Request identity and original URL metadata are built in.
 
 ```ts
-type RequestState = { requestId: string; locale?: string };
-
-const trackRequest = defineHandler<RequestState>({
-  name: "track-request",
-  handler: (request, _event, context) => {
-    context.requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
-    return next({ request: { "x-request-id": context.requestId } });
-  },
-});
+type RequestState = { locale?: string };
 
 const detectLocale = defineHandler<RequestState>({
   name: "detect-locale",
@@ -95,12 +87,10 @@ const detectLocale = defineHandler<RequestState>({
   },
 });
 
-export default chain([trackRequest, detectLocale], {
-  createContext: (): RequestState => ({ requestId: "" }),
-});
+export default chain<RequestState>([detectLocale]);
 ```
 
-Use the context inside the chain. Route handlers cannot read it. To pass a value to a route handler, use a request header, as `trackRequest` does. [examples/03](../examples/03-typed-context.ts) has the complete file.
+Use `context.requestId` for logs or forward it explicitly with `next({ request })`. Incoming request-ID headers do not change the generated ID. Route handlers cannot read context directly. [examples/03](../examples/03-typed-context.ts) has the complete file.
 
 ## Pass a value to route handlers
 
@@ -175,7 +165,7 @@ Use `onError` for rules that call other services. Return a response that you cho
 
 ```ts
 export default chain([lookupFeatureFlags], {
-  ruleTimeoutMs: 500,
+  timeout: 500,
   onError: () => new Response("Service unavailable", { status: 503 }),
 });
 ```
@@ -204,7 +194,7 @@ const locale = createLocaleRule(["en", "pl"], "en");
 export default chain([requestId, maintenance, [locale, path("/**")]]);
 ```
 
-Factories keep each integration testable on its own. Share one context type across the integrations so that they type-check against the same `createContext`. [examples/07](../examples/07-composing-rules.ts) shows the complete pattern.
+Factories keep each integration testable on its own. Share one context type across the integrations with `chain<Context>(...)`. [examples/07](../examples/07-composing-rules.ts) shows the complete pattern.
 
 ## Log what the chain does
 

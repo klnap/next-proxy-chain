@@ -1,4 +1,3 @@
-import type { NextFetchEvent, NextRequest } from "next/server";
 import { DEFINED_HANDLER } from "./constants";
 import { executeChain } from "./engine";
 import { withPaths } from "./matching";
@@ -7,7 +6,6 @@ import type {
   NativeProxy,
   PathMatcher,
   ChainOptions,
-  ProxyContext,
   HandlerFn,
   HandlerFilter,
   HandlerRule,
@@ -18,12 +16,14 @@ import type {
 export type ChainScope = Omit<HandlerFilter, "name"> | PathMatcher | readonly PathMatcher[];
 
 /** One entry of chain(): a native handler, a defineHandler() result, or a scoped tuple. */
-export type ChainEntry<TContext = ProxyContext> =
+export type ChainEntry<TContext extends object = object> =
   | NativeProxy<TContext>
   | DefinedHandler<TContext>
   | readonly [NativeProxy<TContext> | DefinedHandler<TContext>, ChainScope];
 
-function isDefinedHandler(value: unknown): value is DefinedHandler<ProxyContext> {
+function isDefinedHandler<TContext extends object>(
+  value: unknown,
+): value is DefinedHandler<TContext> {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -46,24 +46,26 @@ function toFilter(scope: ChainScope): HandlerFilter {
 }
 
 /** Adapts a native (req, event) handler to the internal (req, ctx, event) rule signature. */
-function fromNative(handler: NativeProxy<ProxyContext>): HandlerRule {
-  const run: HandlerFn = (req, ctx, event: NextFetchEvent) => handler(req, event, ctx);
+function fromNative<TContext extends object>(
+  handler: NativeProxy<TContext>,
+): HandlerRule<TContext> {
+  const run: HandlerFn<TContext> = (req, ctx, event) => handler(req, event, ctx);
   const name = handler.name && handler.name !== "proxy" ? handler.name : undefined;
   return { run, name };
 }
 
-function toEntry(entry: ChainEntry<ProxyContext>): HandlerRule<ProxyContext> {
+function toEntry<TContext extends object>(entry: ChainEntry<TContext>): HandlerRule<TContext> {
   if (Array.isArray(entry)) {
     const [target, scope] = entry as readonly [
-      NativeProxy<ProxyContext> | DefinedHandler<ProxyContext>,
+      NativeProxy<TContext> | DefinedHandler<TContext>,
       ChainScope,
     ];
     const filter = toFilter(scope);
-    if (isDefinedHandler(target)) return withPaths(target, filter);
-    return withPaths(fromNative(target as NativeProxy<ProxyContext>), filter);
+    if (isDefinedHandler<TContext>(target)) return withPaths(target, filter);
+    return withPaths(fromNative(target as NativeProxy<TContext>), filter);
   }
-  if (isDefinedHandler(entry)) return entry;
-  if (typeof entry === "function") return fromNative(entry as NativeProxy<ProxyContext>);
+  if (isDefinedHandler<TContext>(entry)) return entry;
+  if (typeof entry === "function") return fromNative(entry as NativeProxy<TContext>);
   throw new TypeError(
     "[proxy-chain] chain entries must be native handlers or defineHandler() results",
   );
@@ -72,27 +74,17 @@ function toEntry(entry: ChainEntry<ProxyContext>): HandlerRule<ProxyContext> {
 /**
  * Composes native Next.js proxy handlers and defineHandler() results into one proxy.
  *
- * - A plain function receives `(request, event)`, exactly like a native `proxy.ts` export.
+ * - A plain function receives native `(request, event)` arguments plus context as a third argument.
  * - A `defineHandler()` handler receives `(request, event, context)`.
  * - `[handler, scope]` runs the handler only for matching paths or hosts.
  *
  * @example
  * export default chain([intlProxy, [authProxy, { include: '/dashboard/**' }]])
  */
-export function chain(
-  entries: readonly ChainEntry<ProxyContext>[],
-  options?: ChainOptions<ProxyContext>,
-): ReturnType<typeof executeChain>;
-export function chain<TContext>(
-  entries: readonly ChainEntry<TContext>[],
-  options: ChainOptions<TContext> & {
-    createContext: (req: NextRequest, event: NextFetchEvent) => TContext;
-  },
-): ReturnType<typeof executeChain>;
-export function chain<TContext>(
+export function chain<TContext extends object = object>(
   entries: readonly ChainEntry<TContext>[],
   options?: ChainOptions<TContext>,
 ): ReturnType<typeof executeChain> {
-  const normalized = entries.map((entry) => toEntry(entry as ChainEntry<ProxyContext>));
-  return executeChain((options ?? {}) as ChainOptions<ProxyContext>, normalized);
+  const normalized = entries.map((entry) => toEntry(entry));
+  return executeChain(options ?? {}, normalized);
 }

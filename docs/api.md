@@ -10,9 +10,9 @@ import {
   isNextResult,
   next,
   path,
-  createProxyContext,
   RuleTimeoutError,
 } from "@klnap/next-proxy-chain";
+import type { HandlerContext, RequestMetadata } from "@klnap/next-proxy-chain";
 ```
 
 ## `chain`
@@ -22,7 +22,7 @@ Composes native Next.js proxy handlers, defineHandler() results, and scoped tupl
 ```ts
 chain(entries);
 chain(entries, options);
-chain<TContext>(entries, { createContext, ...options });
+chain<TContext>(entries, options);
 ```
 
 `entries` is an array. Each entry is one of:
@@ -59,7 +59,7 @@ const authHandler = defineHandler<Context>({
 });
 ```
 
-The handler receives `(request, event, context)`. `rules.when` runs after include/exclude matching and before the handler. It uses the handler timeout or, if unset, the chain's `ruleTimeoutMs`.
+The handler receives `(request, event, context)`. `rules.when` runs after include/exclude matching and before the handler. It shares the handler's signal and deadline; an unset handler timeout inherits chain `timeout`.
 
 The optional handler-level `onError` replaces the chain-level `onError` for that handler. If it returns `undefined`, `null`, or throws, the request fails closed; the chain-level handler is not tried afterward. Verbose diagnostics identify which policy handled the error.
 
@@ -132,13 +132,25 @@ Compiles host names for a host scope.
 
 The host comes from the `host` header, or from `x-forwarded-host` when `host` is absent. The client controls this header. See [Security](security.md#host-matching).
 
-## `createProxyContext`
+## Request context
 
 ```ts
-createProxyContext(): ProxyContext // Map<string, unknown>
+type RequestMetadata = {
+  readonly requestId: string;
+  readonly startedAt: number;
+  readonly elapsedMs: number;
+  readonly originalUrl: string;
+  readonly originalPathname: string;
+  readonly originalHostname: string;
+};
+
+type HandlerContext<TContext extends object = object> = RequestMetadata &
+  Omit<Partial<TContext>, keyof RequestMetadata | "signal"> & {
+    readonly signal: AbortSignal;
+  };
 ```
 
-Creates the default per-request context. You rarely call it directly. The default `createContext` uses it.
+Every invocation creates one ID and metadata snapshot. Application properties are mutable, optional until set, and isolated per request. The seven metadata properties and `signal` are immutable.
 
 ## `RuleTimeoutError`
 
@@ -149,24 +161,22 @@ class RuleTimeoutError extends Error {
 }
 ```
 
-Passed to `onError` when a rule exceeds `ruleTimeoutMs`. Check with `err instanceof RuleTimeoutError`.
+Passed to `onError` when a handler exceeds its timeout. Check with `err instanceof RuleTimeoutError`.
 
 ## Options
 
-| Option                | Type                                                    | Default              | Description                                                                                                                                             |
-| :-------------------- | :------------------------------------------------------ | :------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `createContext`       | `(req, event) => TContext`                              | `createProxyContext` | Creates the context for each request. Required when `TContext` is not a `Map`.                                                                          |
-| `headerMergeStrategy` | `'last-write-wins' \| 'first-write-wins' \| MergeFn`    | `'last-write-wins'`  | Resolves response header conflicts between rules.                                                                                                       |
-| `cookieMergeStrategy` | `'last-write-wins' \| 'first-write-wins' \| MergeFn`    | `'last-write-wins'`  | Resolves `Set-Cookie` conflicts with the same name, domain, and path.                                                                                   |
-| `ruleTimeoutMs`       | `number`                                                | `0`                  | Time limit per rule in milliseconds. `0` disables it. Must be a finite number, 0 or greater.                                                            |
-| `onError`             | `OnErrorHandler`                                        | none                 | Recovers from a thrown rule or a timeout. See below.                                                                                                    |
-| `requestHeaderPolicy` | `{ blocked?: string[]; allowed?: string[] }`            | `{}`                 | Controls which request headers `next({ request })` may set.                                                                                             |
-| `debug`               | `false \| true \| 'compact' \| 'detailed' \| 'verbose'` | `false`              | Built-in request diagnostics. `true` means `'detailed'`.                                                                                                |
-| `onTrace`             | `(trace: ChainTrace) => void \| Promise<void>`          | none                 | Receives one completed structured trace per request. The chain does not await it.                                                                       |
-| `tracePath`           | `boolean`                                               | `true`               | Set `false` to omit request pathnames from built-in output and traces.                                                                                  |
-| `logger`              | `ChainLogger`                                           | console              | Replaces the built-in output sink. Completed debug blocks use `info`; methods must provide `debug`, `info`, `warn`, `error`. Sink failures are ignored. |
-| `strictOverrideCheck` | `boolean`                                               | `false`              | Throws at startup when the runtime cannot apply request overrides.                                                                                      |
-| `hostFolderHeader`    | `string`                                                | unset                | Name of a request header that prefixes internal rewrites with a folder. For multi-tenant `app/(sites)/...` layouts. Off by default.                     |
+| Option                | Type                                                    | Default             | Description                                                                                                                                             |
+| :-------------------- | :------------------------------------------------------ | :------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `headerMergeStrategy` | `'last-write-wins' \| 'first-write-wins' \| MergeFn`    | `'last-write-wins'` | Resolves response header conflicts between rules.                                                                                                       |
+| `cookieMergeStrategy` | `'last-write-wins' \| 'first-write-wins' \| MergeFn`    | `'last-write-wins'` | Resolves `Set-Cookie` conflicts with the same name, domain, and path.                                                                                   |
+| `timeout`             | `number`                                                | `0`                 | Time limit per handler, including its predicate. Zero disables it. Must be an integer from 0 through `2_147_483_647`.                                   |
+| `onError`             | `OnErrorHandler`                                        | none                | Recovers from ordinary errors. Timeout and request cancellation accept only a terminal `Response`.                                                      |
+| `requestHeaderPolicy` | `{ blocked?: string[]; allowed?: string[] }`            | `{}`                | Controls which request headers `next({ request })` may set.                                                                                             |
+| `debug`               | `false \| true \| 'compact' \| 'detailed' \| 'verbose'` | `false`             | Built-in request diagnostics. `true` means `'detailed'`.                                                                                                |
+| `onTrace`             | `(trace: ChainTrace) => void \| Promise<void>`          | none                | Receives one completed structured trace per request. The chain does not await it.                                                                       |
+| `tracePath`           | `boolean`                                               | `true`              | Set `false` to omit request pathnames from built-in output and traces.                                                                                  |
+| `logger`              | `ChainLogger`                                           | console             | Replaces the built-in output sink. Completed debug blocks use `info`; methods must provide `debug`, `info`, `warn`, `error`. Sink failures are ignored. |
+| `strictOverrideCheck` | `boolean`                                               | `false`             | Throws at startup when the runtime cannot apply request overrides.                                                                                      |
 
 `MergeFn` is `(key: string, existing: string, incoming: string) => string | null`. Returning `null` removes the header or cookie.
 
@@ -193,11 +203,11 @@ Blocked names are dropped silently. Set `debug: true` to see them in the logs.
 
 `defineHandler({ debug })` overrides the chain level for that handler. Explicit `false` hides its built-in details, but never changes execution or the `onTrace` callback. A handler-level `true`, `'detailed'`, or `'verbose'` can enable built-in output when chain debugging is off. `'compact'` requests summary output.
 
-`onTrace` is independent of built-in debug filtering. It receives sanitized method, optional pathname, duration, final outcome, and ordered handler outcomes. It never receives request headers, cookies, bodies, context values, or raw error objects. Rejected promises and thrown errors from the callback are ignored.
+`onTrace` is independent of built-in debug filtering. Every trace includes `requestId`, `startedAt`, monotonic `durationMs`, optional pathname, final outcome, and ordered handler outcomes. It never receives request headers, cookies, bodies, context values, or raw error objects. Rejected promises and thrown errors from the callback are ignored.
 
 The built-in formatter uses `NO_COLOR` before `FORCE_COLOR`, then TTY detection. It uses plain text when output is non-interactive or terminal capabilities are uncertain. `tracePath: false` omits pathnames; destination query values are always redacted. Terminal controls and excessively long strings are sanitized.
 
-Handler durations include `when` evaluation and error recovery. Total duration includes response composition and finalization, so handler durations need not sum to the request duration. A timeout reports the deadline; it does not claim the timed-out operation was cancelled.
+Handler durations include `when` evaluation but exclude recovery. Total duration includes recovery, response composition, and finalization. Timeout aborts the handler signal and stops waiting; user code must cooperate with the signal.
 
 ### `onError`
 
@@ -206,7 +216,7 @@ type OnErrorHandler<TContext> = (
   err: unknown,
   ruleIndex: number,
   req: NextRequest,
-  ctx: TContext,
+  ctx: HandlerContext<TContext>,
 ) => OnErrorResult | Promise<OnErrorResult>;
 ```
 
@@ -235,19 +245,20 @@ Any logger with these four methods works, including pino and winston.
 
 ## Types
 
-| Type                                         | Meaning                                                  |
-| :------------------------------------------- | :------------------------------------------------------- |
-| `ChainOptions<TContext>`                     | Options accepted by `chain()`.                           |
-| `ChainEntry<TContext>`                       | A native handler, defined handler, or scoped tuple.      |
-| `DefinedHandler<TContext>`                   | The return type of `defineHandler()`.                    |
-| `ProxyContext`                               | `Map<string, unknown>`.                                  |
-| `PathMatcher`                                | `string \| RegExp`.                                      |
-| `HostMatcher`                                | `string \| RegExp \| (string \| RegExp)[]`.              |
-| `NextOptions`                                | The argument to `next()`.                                |
-| `NextResult`                                 | The return type of `next()`.                             |
-| `MergeStrategy`                              | `'last-write-wins' \| 'first-write-wins' \| MergeFn`.    |
-| `RequestHeaderPolicy`                        | `{ blocked?, allowed? }`.                                |
-| `OnErrorHandler`, `OnErrorResult`            | Types for `onError`.                                     |
-| `ChainLogger`                                | The logger interface.                                    |
-| `DebugLevel`                                 | `false \| true \| 'compact' \| 'detailed' \| 'verbose'`. |
-| `ChainTrace`, `ChainOutcome`, `HandlerTrace` | Sanitized structured request diagnostics.                |
+| Type                                         | Meaning                                                       |
+| :------------------------------------------- | :------------------------------------------------------------ |
+| `ChainOptions<TContext>`                     | Options accepted by `chain()`.                                |
+| `ChainEntry<TContext>`                       | A native handler, defined handler, or scoped tuple.           |
+| `DefinedHandler<TContext>`                   | The return type of `defineHandler()`.                         |
+| `HandlerContext<TContext>`                   | Read-only request metadata and signal with mutable app state. |
+| `RequestMetadata`                            | Immutable request identity and original request snapshot.     |
+| `PathMatcher`                                | `string \| RegExp`.                                           |
+| `HostMatcher`                                | `string \| RegExp \| (string \| RegExp)[]`.                   |
+| `NextOptions`                                | The argument to `next()`.                                     |
+| `NextResult`                                 | The return type of `next()`.                                  |
+| `MergeStrategy`                              | `'last-write-wins' \| 'first-write-wins' \| MergeFn`.         |
+| `RequestHeaderPolicy`                        | `{ blocked?, allowed? }`.                                     |
+| `OnErrorHandler`, `OnErrorResult`            | Types for `onError`.                                          |
+| `ChainLogger`                                | The logger interface.                                         |
+| `DebugLevel`                                 | `false \| true \| 'compact' \| 'detailed' \| 'verbose'`.      |
+| `ChainTrace`, `ChainOutcome`, `HandlerTrace` | Sanitized structured request diagnostics.                     |

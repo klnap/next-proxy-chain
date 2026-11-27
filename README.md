@@ -280,7 +280,7 @@ Pass `context.signal` to work that supports cooperative cancellation. A timeout 
 
 For ordinary errors, handler-level `onError` takes precedence over chain-level `onError`. Returning `NextResponse.next()` or a successful `NextResponse.rewrite()` continues after the failed handler. A terminal `Response` stops the chain.
 
-Timeout, request-cancellation, and engine-level recovery accept only a terminal Web `Response`; continuation and `NextResponse.rewrite()` are rejected. Without recovery, a timeout returns `500`. Cancellation stops this chain and returns a native `NextResponse.next()` handoff. Next.js may continue downstream routing, so cancellation is not a fail-closed response.
+Timeout, request-cancellation, and engine-level recovery accept only a terminal Web `Response`; continuation and any `NextResponse.rewrite()`, whatever its status, are rejected. Without recovery, a timeout returns `500`. Cancellation stops this chain and returns a native `NextResponse.next()` handoff. Next.js may continue downstream routing, so cancellation is not a fail-closed response.
 
 ### Debugging and observability
 

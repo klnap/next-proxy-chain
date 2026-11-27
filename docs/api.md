@@ -105,7 +105,7 @@ Host matcher strings compare case-insensitively and ignore ports. Host wildcards
 
 Only `NextResponse` routing responses are interpreted as continuation or rewrite instructions. A plain `Response` remains terminal, even if it contains Next.js routing headers.
 
-`NextResponse.rewrite()` continues only for a successful rewrite response. Non-success responses are terminal. Redirects are terminal.
+`NextResponse.rewrite()` continues only for a successful rewrite response. A non-success rewrite is terminal: the chain returns its status and body with no routing headers, so Next.js does not route to the destination. Redirects are terminal.
 
 ## Request headers
 
@@ -157,7 +157,7 @@ Custom state is shared between handlers for one request and isolated across requ
 
 Handler-level `onError` takes precedence over chain-level `onError`. For ordinary errors, returning `NextResponse.next()` or a successful `NextResponse.rewrite()` continues after the failed handler; a rewrite is staged like a normal rewrite. Returning any other `Response` terminates with that response. Returning `undefined`, `void`, or `null`, throwing, or returning an unsupported value fails closed.
 
-For timeout, request cancellation, and engine-level failures, recovery accepts only a terminal Web `Response`, including a redirect. `NextResponse.next()` and successful `NextResponse.rewrite()` are rejected because they would resume routing. A rejected timeout or engine-level recovery returns `500`. Without recovery, timeout returns `500`. Cancellation stops the package chain and returns a native `NextResponse.next()` handoff; Next.js may continue downstream routing, so this is not a fail-closed response. Error diagnostics record the chosen recovery policy.
+For timeout, request cancellation, and engine-level failures, recovery accepts only a terminal Web `Response`, including a redirect. `NextResponse.next()` and any `NextResponse.rewrite()`, whatever its status, are rejected because they would resume routing. A rejected timeout or engine-level recovery returns `500`. Without recovery, timeout returns `500`. Cancellation stops the package chain and returns a native `NextResponse.next()` handoff; Next.js may continue downstream routing, so this is not a fail-closed response. Error diagnostics record the chosen recovery policy.
 
 ## Chain options
 

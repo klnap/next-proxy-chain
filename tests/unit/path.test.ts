@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { path } from "../../src/index";
+import { path } from "../../src/core/matching";
 
 describe("path() glob and regex contracts", () => {
   it("matches exact paths", () => {

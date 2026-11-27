@@ -1,7 +1,8 @@
+import { nextWithResponseHeaders } from "../helpers/native-response";
 import { describe, expect, it } from "bun:test";
 import type { NextFetchEvent } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
-import { chain as composeChain, defineHandler, next } from "../../src/index";
+import { chain as composeChain, defineHandler } from "../../src/index";
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} };
 const fakeEvent = {} as NextFetchEvent;
@@ -10,13 +11,13 @@ describe("onError recovery semantics", () => {
   it("treats NextResponse.next() from a rule-level onError as continuation", async () => {
     const boom = defineHandler({
       name: "boom",
-      handler: () => {
+      handle: () => {
         throw new Error("upstream down");
       },
     });
     const auth = defineHandler({
       name: "auth",
-      handler: () => new Response("denied", { status: 403 }),
+      handle: () => new Response("denied", { status: 403 }),
     });
     const handler = composeChain([boom, auth], {
       logger: silent,
@@ -30,13 +31,13 @@ describe("onError recovery semantics", () => {
   it("still stops on a terminal Response from onError", async () => {
     const boom = defineHandler({
       name: "boom",
-      handler: () => {
+      handle: () => {
         throw new Error("upstream down");
       },
     });
     const auth = defineHandler({
       name: "auth",
-      handler: () => new Response("unreachable", { status: 200 }),
+      handle: () => new Response("unreachable", { status: 200 }),
     });
     const handler = composeChain([boom, auth], {
       logger: silent,
@@ -50,7 +51,7 @@ describe("onError recovery semantics", () => {
   it("strips Next.js request-override headers from a terminal rule Response", async () => {
     const stop = defineHandler({
       name: "stop",
-      handler: () =>
+      handle: () =>
         new Response(null, {
           status: 302,
           headers: {
@@ -71,12 +72,12 @@ describe("onError recovery semantics", () => {
   it("merges earlier rule headers and cookies into an engine-level onError Response", async () => {
     const setHeaders = defineHandler({
       name: "headers",
-      handler: () =>
-        next({ headers: { "x-csp": "default-src 'self'", "set-cookie": "sid=1; Path=/" } }),
+      handle: () =>
+        nextWithResponseHeaders({ "x-csp": "default-src 'self'", "set-cookie": "sid=1; Path=/" }),
     });
     const badRewrite = defineHandler({
       name: "bad-rewrite",
-      handler: () =>
+      handle: () =>
         new Response(null, {
           status: 200,
           headers: { "x-middleware-rewrite": "http://[::bad" },
@@ -96,7 +97,7 @@ describe("onError recovery semantics", () => {
     // Continues with an invalid rewrite target, so the failure happens after all rules ran.
     const badRewrite = defineHandler({
       name: "bad-rewrite",
-      handler: () => {
+      handle: () => {
         const res = NextResponse.rewrite(new URL("http://localhost/ok"));
         res.headers.set("x-middleware-rewrite", "http://[::bad");
         return res;
@@ -115,7 +116,7 @@ describe("onError recovery semantics", () => {
   it("strips routing override headers from an onError-recovered Response", async () => {
     const boom = defineHandler({
       name: "boom",
-      handler: () => {
+      handle: () => {
         throw new Error("upstream down");
       },
     });
@@ -140,7 +141,7 @@ describe("onError recovery semantics", () => {
   it("does not honor x-middleware-rewrite from a relayed plain Response", async () => {
     const upstream = defineHandler({
       name: "upstream",
-      handler: () =>
+      handle: () =>
         new Response("upstream body", {
           status: 200,
           headers: { "x-middleware-rewrite": "/internal/admin" },
@@ -148,7 +149,7 @@ describe("onError recovery semantics", () => {
     });
     const auth = defineHandler({
       name: "auth",
-      handler: () => new Response("denied", { status: 403 }),
+      handle: () => new Response("denied", { status: 403 }),
     });
     const handler = composeChain([upstream, auth], { logger: silent });
 
@@ -159,10 +160,10 @@ describe("onError recovery semantics", () => {
   });
 
   it("reports a malformed rule return with that rule index, not -1", async () => {
-    const malformed = defineHandler({ name: "malformed", handler: () => "continue" as never });
+    const malformed = defineHandler({ name: "malformed", handle: () => "continue" as never });
     const auth = defineHandler({
       name: "auth",
-      handler: () => new Response("denied", { status: 403 }),
+      handle: () => new Response("denied", { status: 403 }),
     });
     const seen: number[] = [];
     const handler = composeChain([malformed, auth], {

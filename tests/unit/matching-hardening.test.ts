@@ -1,7 +1,8 @@
+import { NextResponse } from "next/server";
 import { describe, expect, it } from "bun:test";
 import { NextRequest } from "next/server";
-import { canonicalPathname, host, normalizeHost } from "../../src/core/matching";
-import { chain as composeChain, defineHandler, next, path } from "../../src/index";
+import { canonicalPathname, host, normalizeHost, path } from "../../src/core/matching";
+import { chain as composeChain, defineHandler } from "../../src/index";
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -32,11 +33,16 @@ describe("scope matching hardening", () => {
   });
 
   it("applies an include-scoped auth rule to an encoded admin path", async () => {
-    const auth = defineHandler({
-      name: "auth",
-      handler: () => new Response("denied", { status: 403 }),
-    });
-    const handler = composeChain([[auth, { include: path("/admin/**") }]], { logger: silent });
+    const handler = composeChain(
+      [
+        {
+          name: "auth",
+          handle: () => new Response("denied", { status: 403 }),
+          rules: { include: path("/admin/**") },
+        },
+      ],
+      { logger: silent },
+    );
 
     const encoded = await handler(new NextRequest("http://localhost/%61dmin/users"), {} as never);
     expect(encoded.status).toBe(403);
@@ -46,18 +52,23 @@ describe("scope matching hardening", () => {
   });
 
   it("fails closed with 400 on malformed percent-encoding", async () => {
-    const pass = defineHandler({ name: "pass", handler: () => next() });
+    const pass = defineHandler({ name: "pass", handle: () => NextResponse.next() });
     const handler = composeChain([pass], { logger: silent });
     const res = await handler(new NextRequest("http://localhost/%E0%A4%A"), {} as never);
     expect(res.status).toBe(400);
   });
 
   it("applies a ** scope to decoded control characters in the path", async () => {
-    const auth = defineHandler({
-      name: "auth",
-      handler: () => new Response("denied", { status: 403 }),
-    });
-    const handler = composeChain([[auth, { include: path("/admin/**") }]], { logger: silent });
+    const handler = composeChain(
+      [
+        {
+          name: "auth",
+          handle: () => new Response("denied", { status: 403 }),
+          rules: { include: path("/admin/**") },
+        },
+      ],
+      { logger: silent },
+    );
     for (const url of [
       "http://localhost/admin/%0Asecret",
       "http://localhost/admin/%0Dsecret",
@@ -68,16 +79,22 @@ describe("scope matching hardening", () => {
     }
   });
 
-  it("rejects rule objects that are not created by defineHandler", () => {
-    const rule = { run: () => next(), include: [path("/x/**")] };
-    expect(() => composeChain([rule as never], { logger: silent })).toThrow(/defineHandler/);
+  it("rejects internal rule objects that do not use the public configuration", () => {
+    const rule = { run: () => NextResponse.next(), include: [path("/x/**")] };
+    expect(() => composeChain([rule as never], { logger: silent })).toThrow(
+      /configured handlers require a non-empty name and handle/,
+    );
   });
 
   it("rejects a path segment that mixes a wildcard with other characters", () => {
-    const auth = defineHandler({
-      name: "auth",
-      handler: () => new Response("denied", { status: 403 }),
-    });
-    expect(() => composeChain([[auth, "/files/*.pdf"]])).toThrow(/mixes a wildcard/);
+    expect(() =>
+      composeChain([
+        {
+          name: "auth",
+          handle: () => new Response("denied", { status: 403 }),
+          rules: { include: "/files/*.pdf" },
+        },
+      ]),
+    ).toThrow(/mixes a wildcard/);
   });
 });

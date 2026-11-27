@@ -1,22 +1,6 @@
 import type { NextFetchEvent, NextRequest, NextResponse } from "next/server";
-import { NEXT } from "./constants";
 import type { HandlerContext } from "./context";
 import type { DebugLevel, HandlerWhen, TraceCallback } from "./diagnostics/types";
-
-/**
- * Configuration options for chain continuation.
- */
-export type NextOptions = {
-  /** Request header overrides visible to downstream rules and handlers. */
-  request?: HeadersInit;
-  /** Response headers merged into the final outgoing response. `set-cookie` is extracted as cookies. */
-  headers?: HeadersInit;
-};
-
-/**
- * Continuation token indicating the pipeline should proceed to subsequent rules.
- */
-export type NextResult = NextOptions & { readonly [NEXT]: true };
 
 export type PathMatcher = RegExp | string;
 
@@ -59,42 +43,34 @@ export interface BaseHandlerRule<TFn, TContext extends object = object> {
   };
 }
 
-export type HandlerFilter = {
-  include?: RouteScopeList;
-  exclude?: RouteScopeList;
-  name?: string;
-};
-
 /**
- * A native Next.js proxy handler: `(request, event)`. Use it in chain() without any wrapper.
+ * A chain handler callback uses `(request, event, context)`. Native Next.js `(request, event)` handlers also work.
  */
 export type NativeProxy<TContext extends object = object> = (
-  req: NextRequest,
+  request: NextRequest,
   event: NextFetchEvent,
   /** Request context added by chain(); Next.js continues to pass its native event unchanged. */
   context: HandlerContext<TContext>,
 ) =>
   | NextResponse
   | Response
-  | NextResult
   | undefined
   | void
-  | Promise<NextResponse | Response | NextResult | undefined | void>;
+  | Promise<NextResponse | Response | undefined | void>;
 
 /**
  * A single proxy execution function.
  */
 export type HandlerFn<TContext extends object = object> = (
-  req: NextRequest,
-  ctx: HandlerContext<TContext>,
+  request: NextRequest,
+  context: HandlerContext<TContext>,
   event: NextFetchEvent,
 ) =>
   | NextResponse
   | Response
-  | NextResult
   | undefined
   | void
-  | Promise<NextResponse | Response | NextResult | undefined | void>;
+  | Promise<NextResponse | Response | undefined | void>;
 
 export type HandlerRule<TContext extends object = object> = BaseHandlerRule<
   HandlerFn<TContext>,
@@ -121,31 +97,39 @@ export interface ChainLogger {
   error: (metaOrMsg: unknown, maybeMsg?: string) => void;
 }
 
-export interface RequestHeaderPolicy {
-  blocked?: readonly string[];
-  allowed?: readonly string[];
-}
-
 /**
  * Value returned from `onError`.
  *
  * - `Response` — stop the pipeline and return it
- * - `NextResult` (`next()`) — continue after an ordinary rule error only
+ * - `NextResponse.next()` — continue after an ordinary rule error only
  * - `undefined` / `void` / `null` — fail closed (`500`)
  */
-export type OnErrorResult = NextResponse | Response | NextResult | undefined | void | null;
+export type OnErrorResult = NextResponse | Response | undefined | void | null;
 
 export type OnErrorHandler<TContext extends object = object> = (
-  err: unknown,
+  error: unknown,
   /**
    * 0-based index of the rule that threw.
    * `-1` means the error originated in the pipeline engine.
    * Engine-level errors cannot continue; only a `Response` is honored.
    */
   ruleIndex: number,
-  req: NextRequest,
-  ctx: HandlerContext<TContext>,
+  request: NextRequest,
+  context: HandlerContext<TContext>,
 ) => OnErrorResult | Promise<OnErrorResult>;
+
+export type HandlerConfig<TContext extends object = object> = {
+  name: string;
+  rules?: {
+    include?: RouteScopeList;
+    exclude?: RouteScopeList;
+    when?: HandlerWhen<TContext>;
+  };
+  timeout?: number;
+  debug?: DebugLevel;
+  onError?: OnErrorHandler<TContext>;
+  handle: NativeProxy<TContext>;
+};
 
 export interface ChainConfig<TContext extends object = object> {
   cookieMergeStrategy: MergeStrategy;
@@ -161,7 +145,6 @@ export interface ChainConfig<TContext extends object = object> {
   tracePath?: boolean;
   /** Maximum execution time per handler, including its predicate, in milliseconds. 0 disables timeout. */
   timeout: number;
-  requestHeaderPolicy: RequestHeaderPolicy;
   /** Throw an error on startup if the runtime platform does not support request header overrides. */
   strictOverrideCheck?: boolean;
 }

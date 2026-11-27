@@ -6,9 +6,7 @@ import {
   decodeOverriddenRequestHeaders,
   headersDiffer,
   headersInitToHeaders,
-  isRequestHeaderAllowed,
   listSetCookie,
-  mergeRequestHeaderOverrides,
   mergeWrites,
   parseCookieName,
   responseHeaderItems,
@@ -27,36 +25,6 @@ describe("headers: initialization and difference comparison", () => {
 
     expect(headersDiffer(base, same)).toBe(false);
     expect(headersDiffer(base, different)).toBe(true);
-  });
-});
-
-describe("headers: request header policy and overrides", () => {
-  it("blocks dangerous headers by default", () => {
-    const target = new Headers();
-    const overrides = new Headers({
-      host: "malicious.com",
-      authorization: "Bearer hacked",
-      "x-custom-tenant": "tenant-1",
-    });
-
-    const { applied, dropped } = mergeRequestHeaderOverrides(target, overrides);
-
-    expect(applied).toBe(1);
-    expect(dropped).toContain("host");
-    expect(dropped).toContain("authorization");
-    expect(target.get("host")).toBeNull();
-    expect(target.get("authorization")).toBeNull();
-    expect(target.get("x-custom-tenant")).toBe("tenant-1");
-  });
-
-  it("disallows internal Next.js middleware headers from mutation", () => {
-    expect(isRequestHeaderAllowed("x-middleware-next")).toBe(false);
-    expect(isRequestHeaderAllowed("x-middleware-override-headers")).toBe(false);
-    expect(isRequestHeaderAllowed("x-middleware-request-x-tenant")).toBe(false);
-  });
-
-  it("supports custom allowlist exceptions", () => {
-    expect(isRequestHeaderAllowed("authorization", { allowed: ["authorization"] })).toBe(true);
   });
 });
 
@@ -165,6 +133,16 @@ describe("headers: response header filtering and merge", () => {
     const decoded = decodeOverriddenRequestHeaders(headers);
     expect(decoded.get("x-user-id")).toBe("usr_abc");
     expect(decoded.get("x-org-id")).toBe("org_xyz");
+  });
+
+  it("preserves native deletion semantics for omitted replacement values", () => {
+    const headers = new Headers({
+      "x-middleware-override-headers": "x-keep,x-remove",
+      "x-middleware-request-x-keep": "yes",
+    });
+
+    const decoded = decodeOverriddenRequestHeaders(headers);
+    expect([...decoded]).toEqual([["x-keep", "yes"]]);
   });
 
   it("merges writes using last-write-wins by default", () => {

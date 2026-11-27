@@ -1,27 +1,42 @@
 import type { NextFetchEvent, NextRequest } from "next/server";
-import { DEFINED_HANDLER } from "./constants";
 import type { HandlerContext } from "./context";
-import type { HandlerDebugOptions } from "./diagnostics/types";
 import { compileScopes } from "./matching";
 import { assertValidTimeout } from "./timeout";
-import type { HandlerRule } from "./types";
+import type { HandlerConfig, HandlerRule } from "./types";
 
-export type DefinedHandler<TContext extends object = object> = HandlerRule<TContext> & {
-  readonly [DEFINED_HANDLER]: true;
-};
-
-/**
- * Defines a native-signature handler with optional chain rules and local settings.
- */
-export function defineHandler<TContext extends object = object>(
-  options: HandlerDebugOptions<TContext>,
-): DefinedHandler<TContext> {
+export function assertHandlerConfig<TContext extends object>(
+  options: HandlerConfig<TContext>,
+): void {
+  if (
+    !options ||
+    typeof options !== "object" ||
+    typeof options.name !== "string" ||
+    options.name.trim() === "" ||
+    typeof options.handle !== "function"
+  ) {
+    throw new TypeError("[proxy-chain] configured handlers require a non-empty name and handle");
+  }
+  if ("handler" in options) {
+    throw new TypeError(
+      "[proxy-chain] configured handler property 'handler' is unsupported; use 'handle'",
+    );
+  }
+  if ("config" in options || "options" in options) {
+    throw new TypeError("[proxy-chain] handler configuration must use top-level options");
+  }
   assertValidTimeout(options.timeout);
+}
+
+export function toHandlerRule<TContext extends object>(
+  options: HandlerConfig<TContext>,
+): HandlerRule<TContext> {
+  assertHandlerConfig(options);
+  const { handle } = options;
   const include = compileScopes(options.rules?.include);
   const exclude = compileScopes(options.rules?.exclude);
-  const rule = {
+  return {
     run: (request: NextRequest, context: HandlerContext<TContext>, event: NextFetchEvent) =>
-      options.handler(request, event, context),
+      handle(request, event, context),
     name: options.name,
     include,
     exclude,
@@ -34,5 +49,14 @@ export function defineHandler<TContext extends object = object>(
       exclude: options.rules?.exclude,
     },
   };
-  return { ...rule, [DEFINED_HANDLER]: true } as DefinedHandler<TContext>;
+}
+
+/**
+ * Defines a native-signature handler with optional chain rules and local settings.
+ */
+export function defineHandler<TContext extends object = object>(
+  options: HandlerConfig<TContext>,
+): HandlerConfig<TContext> {
+  assertHandlerConfig(options);
+  return options;
 }

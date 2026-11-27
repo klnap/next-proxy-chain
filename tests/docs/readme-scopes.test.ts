@@ -8,31 +8,48 @@ const ev = {} as never;
 
 describe("README scope examples", () => {
   it("path patterns: * is one segment, ** is any depth, /docs/** includes /docs", async () => {
-    const h = composeChain([[deny, "/api/*"]], { logger: silent });
+    const h = composeChain([{ name: "api", handle: deny, rules: { include: "/api/*" } }], {
+      logger: silent,
+    });
     expect((await h(new NextRequest("http://x/api/users"), ev)).status).toBe(403);
     expect((await h(new NextRequest("http://x/api/users/123"), ev)).status).toBe(200);
-    const d = composeChain([[deny, "/docs/**"]], { logger: silent });
+    const d = composeChain([{ name: "docs", handle: deny, rules: { include: "/docs/**" } }], {
+      logger: silent,
+    });
     expect((await d(new NextRequest("http://x/docs"), ev)).status).toBe(403);
     expect((await d(new NextRequest("http://x/docs/a/b"), ev)).status).toBe(403);
   });
 
   it("exclude string and RegExp", async () => {
-    const e = composeChain([[deny, { exclude: "/admin/login" }]], { logger: silent });
+    const e = composeChain([{ name: "admin", handle: deny, rules: { exclude: "/admin/login" } }], {
+      logger: silent,
+    });
     expect((await e(new NextRequest("http://x/admin/login"), ev)).status).toBe(200);
     expect((await e(new NextRequest("http://x/admin/home"), ev)).status).toBe(403);
-    const r = composeChain([[deny, { exclude: /^\/public(\/.*)?$/ }]], { logger: silent });
+    const r = composeChain(
+      [{ name: "public", handle: deny, rules: { exclude: /^\/public(\/.*)?$/ } }],
+      { logger: silent },
+    );
     expect((await r(new NextRequest("http://x/public/a"), ev)).status).toBe(200);
     expect((await r(new NextRequest("http://x/private"), ev)).status).toBe(403);
   });
 
   it("segments are whole: /tenant does not match /tenant-other", async () => {
-    const t = composeChain([[deny, "/tenant/**"]], { logger: silent });
+    const t = composeChain([{ name: "tenant", handle: deny, rules: { include: "/tenant/**" } }], {
+      logger: silent,
+    });
     expect((await t(new NextRequest("http://x/tenant-other/page"), ev)).status).toBe(200);
   });
 
   it("host and path in one include object", async () => {
     const b = composeChain(
-      [[deny, { include: { host: "app.example.com", path: ["/billing/**", "/invoices/**"] } }]],
+      [
+        {
+          name: "billing",
+          handle: deny,
+          rules: { include: { host: "app.example.com", path: ["/billing/**", "/invoices/**"] } },
+        },
+      ],
       { logger: silent },
     );
     expect(

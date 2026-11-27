@@ -1,12 +1,13 @@
-import { chain as composeChain, defineHandler, next } from "@klnap/next-proxy-chain";
+import { NextResponse } from "next/server";
+import { chain as composeChain, defineHandler } from "@klnap/next-proxy-chain";
 
 const lookupFeatureFlags = defineHandler({
   name: "feature-flags",
-  handler: async () => {
+  handle: async () => {
     // Stands in for a remote call that may fail or hang.
     const response = await fetch("https://flags.example.com/config");
     if (!response.ok) throw new Error(`flags returned ${response.status}`);
-    return next();
+    return NextResponse.next();
   },
 });
 

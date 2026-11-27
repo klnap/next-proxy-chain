@@ -1,6 +1,69 @@
-# v2 request context and cancellation contract
+# v2 native-first API, request context, and cancellation contract
 
 Status: approved implementation contract
+
+## Canonical handler configuration and matching
+
+Every configured handler uses one public object shape in `chain()` and
+`defineHandler()`:
+
+```ts
+type HandlerConfig<TContext extends object = object> = {
+  name: string;
+  rules?: {
+    include?: RouteScopeList;
+    exclude?: RouteScopeList;
+    when?: HandlerWhen<TContext>;
+  };
+  timeout?: number;
+  debug?: DebugLevel;
+  onError?: OnErrorHandler<TContext>;
+  handle: NativeProxy<TContext>;
+};
+```
+
+`chain([{ name, rules, timeout, debug, onError, handle }])` and
+`chain([defineHandler({ name, rules, timeout, debug, onError, handle })])` have
+identical types and runtime behavior. `defineHandler()` returns this
+configuration unchanged. Native `(request, event)` functions remain valid
+chain entries. The only public runtime exports are `chain()` and
+`defineHandler()`.
+
+Tuple entries and the `ChainScope` type are removed. A configured entry must
+provide a non-empty string `name` and a function `handle`; JavaScript callers
+receive a clear `TypeError` for malformed configured entries or tuple entries.
+Configuration stays flat: rules are under `rules`, and handler options remain
+top-level. Do not add alternate nested configuration shapes or compatibility
+aliases for removed tuple APIs. The obsolete `handler` property is rejected,
+not aliased to `handle`.
+
+The package does not export a continuation helper or token. Handlers return
+native `NextResponse.next()`, `NextResponse.rewrite()`,
+`NextResponse.redirect()`, a terminal Web `Response`, or `undefined`.
+`NextResponse.next()` and successful `NextResponse.rewrite()` continue; a
+redirect or terminal `Response` stops. Ordinary errors may recover with
+`NextResponse.next()`. Timeout, cancellation, and engine-level recovery remain
+terminal-only where specified below.
+
+Request headers use native `NextResponse.next({ request: { headers } })`
+replacement semantics. There is no package request-header policy; the handler
+chooses the forwarded `Headers` set explicitly. Clone the effective request
+headers to preserve values. Omitted headers are intentionally deleted.
+Next.js routing metadata remains separate from outgoing response headers and
+is stripped from terminal responses.
+
+Next.js `config.matcher` exclusively determines whether the package entrypoint
+runs. Package `rules.include` and `rules.exclude` only filter a handler after
+Next.js invokes the chain; they cannot widen the native matcher. Included
+scopes are ORed, excluded scopes are ORed, and any matching exclusion wins.
+Within a single host/path scope, host and path both must match.
+
+Each handler is matched against the active request at its turn: request-header
+overrides from earlier handlers and a rewrite continued by an earlier handler
+are visible to later matching. `RequestMetadata.originalUrl`,
+`originalPathname`, and `originalHostname` continue to describe the initial
+request. Native Next.js matcher behavior remains owned by Next.js and is not
+reimplemented by this package.
 
 This specification records the final v2 decisions for request metadata, handler
 context, cooperative cancellation, timeout handling, diagnostics, and removal of
@@ -62,7 +125,7 @@ It is independent of incoming headers and contains no user data. The ID is
 stable across handlers, predicates, rewrites, reconstruction, recovery, and
 traces. It is not a distributed tracing identifier.
 
-The package does not add request or response headers. It does not serialize the
+The package does not automatically add request or response headers. It does not serialize the
 context, original URL, query, headers, cookies, bodies, errors, or cancellation
 reasons into diagnostics. Consumers may forward the ID explicitly with native
 Next.js request-header APIs.

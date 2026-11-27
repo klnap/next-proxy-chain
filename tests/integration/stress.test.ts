@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { NextRequest, NextResponse } from "next/server";
-import { chain as composeChain, defineHandler, next } from "../../src/index";
+import { chain as composeChain, defineHandler } from "../../src/index";
 
 describe("Universal Multi-Host & Rewrite Pipeline Stress Test", () => {
   it("executes multi-host routing cleanly without i18n", async () => {
     const multiHostRule = defineHandler({
       name: "multiHost",
-      handler: (req) => {
+      handle: (req) => {
         const host = req.headers.get("host");
         if (host === "api.localhost:3000") {
           return NextResponse.rewrite(new URL(`/api-host${req.nextUrl.pathname}`, req.url));
@@ -14,7 +14,7 @@ describe("Universal Multi-Host & Rewrite Pipeline Stress Test", () => {
         if (host === "admin.localhost:3000") {
           return NextResponse.rewrite(new URL(`/admin-panel${req.nextUrl.pathname}`, req.url));
         }
-        return next();
+        return NextResponse.next();
       },
     });
 
@@ -50,14 +50,14 @@ describe("Universal Multi-Host & Rewrite Pipeline Stress Test", () => {
   it("composes multiple sequential rules without dropping rewrite targets or headers", async () => {
     const rule1 = defineHandler({
       name: "rule1",
-      handler: (req) => {
+      handle: (req) => {
         return NextResponse.rewrite(new URL(`/shop${req.nextUrl.pathname}`, req.url));
       },
     });
 
     const rule2 = defineHandler({
       name: "rule2",
-      handler: (req) => {
+      handle: (req) => {
         expect(req.nextUrl.pathname).toBe("/shop/pl/produkty");
         const translated = req.nextUrl.pathname.replace("/produkty", "/products");
         return NextResponse.rewrite(new URL(translated, req.url));
@@ -66,10 +66,10 @@ describe("Universal Multi-Host & Rewrite Pipeline Stress Test", () => {
 
     const rule3 = defineHandler({
       name: "rule3",
-      handler: (req) => {
+      handle: (req) => {
         expect(req.nextUrl.pathname).toBe("/shop/pl/products");
-        return next({
-          request: { "x-custom-rule": "active" },
+        return NextResponse.next({
+          request: { headers: new Headers({ "x-custom-rule": "active" }) },
           headers: { "x-audit-passed": "true" },
         });
       },
@@ -88,12 +88,12 @@ describe("Universal Multi-Host & Rewrite Pipeline Stress Test", () => {
   it("handles malformed host headers and port variations", async () => {
     const hostIsolation = defineHandler({
       name: "isolation",
-      handler: (req) => {
+      handle: (req) => {
         const host = req.headers.get("host")?.replace(/:\d+$/, "");
         if (host === "shop.localhost") {
           return NextResponse.rewrite(new URL(`/shop${req.nextUrl.pathname}`, req.url));
         }
-        return next();
+        return NextResponse.next();
       },
     });
 

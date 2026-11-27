@@ -1,21 +1,12 @@
 import { NextResponse } from "next/server.js";
-import { isNextResult } from "./actions";
 import {
   applyMergedToResponse,
   cookieItemsFromHeaders,
   decodeOverriddenRequestHeaders,
-  headersInitToHeaders,
-  mergeRequestHeaderOverrides,
   mergeWrites,
   responseHeaderItems,
 } from "./headers";
-import type {
-  ChainLogger,
-  EntryWrite,
-  MergeStrategy,
-  NextResult,
-  RequestHeaderPolicy,
-} from "./types";
+import type { ChainLogger, EntryWrite, MergeStrategy } from "./types";
 
 export function safeInternalError(): NextResponse {
   return new NextResponse("Internal Server Error", {
@@ -110,44 +101,17 @@ export type ResolvedOutcome =
   | { kind: "stop"; response: NextResponse | Response };
 
 export function resolveRuleResult(
-  res: NextResponse | Response | NextResult | undefined | void,
-  requestHeaderPolicy: RequestHeaderPolicy,
-  logger: ChainLogger,
-  debug: boolean,
+  res: NextResponse | Response | undefined | void,
 ): ResolvedOutcome {
-  if (res == null) {
+  if (res === undefined) {
     return { kind: "continue", responseHeaders: new Map(), cookies: new Map() };
   }
 
   // Reject values the chain cannot act on, so the error is attributed to the rule that returned them.
-  if (!isNextResult(res) && !(res instanceof Response)) {
+  if (!(res instanceof Response)) {
     throw new TypeError(
-      `[proxy-chain] rule must return next(), a Response, or undefined. Got ${typeof res}.`,
+      `[proxy-chain] rule must return a Response or undefined. Got ${typeof res}.`,
     );
-  }
-
-  if (isNextResult(res)) {
-    let request: Headers | undefined;
-    if (res.request) {
-      const filtered = new Headers();
-      const { dropped } = mergeRequestHeaderOverrides(
-        filtered,
-        headersInitToHeaders(res.request),
-        requestHeaderPolicy,
-      );
-      if (debug && dropped.length) {
-        logger.warn({ dropped }, "blocked request header mutation");
-      }
-      if ([...filtered.keys()].length) request = filtered;
-    }
-
-    const headerInit = res.headers ? headersInitToHeaders(res.headers) : undefined;
-    return {
-      kind: "continue",
-      request,
-      responseHeaders: headerInit ? responseHeaderItems(headerInit) : new Map(),
-      cookies: headerInit ? cookieItemsFromHeaders(headerInit) : new Map(),
-    };
   }
 
   // Only NextResponse may request continuation. A relayed plain Response must not rewrite or continue the chain.
@@ -156,9 +120,7 @@ export function resolveRuleResult(
     const decoded = decodeOverriddenRequestHeaders(res.headers);
     const hasRequestOverride = res.headers.has("x-middleware-override-headers");
     if (hasRequestOverride) {
-      const target = new Headers();
-      mergeRequestHeaderOverrides(target, decoded, requestHeaderPolicy);
-      request = target;
+      request = decoded;
     }
 
     return {
@@ -177,9 +139,7 @@ export function resolveRuleResult(
     const decoded = decodeOverriddenRequestHeaders(res.headers);
     const hasRequestOverride = res.headers.has("x-middleware-override-headers");
     if (hasRequestOverride) {
-      const target = new Headers();
-      mergeRequestHeaderOverrides(target, decoded, requestHeaderPolicy);
-      request = target;
+      request = decoded;
     }
 
     return {

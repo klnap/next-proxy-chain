@@ -1,12 +1,5 @@
-import { DEFAULT_BLOCKED_REQUEST_HEADERS } from "./constants";
-import type { EntryWrite, MergeStrategy, RequestHeaderPolicy } from "./types";
-
-/**
- * Normalizes header keys to lowercase.
- */
-function normalizeHeaderName(name: string): string {
-  return name.toLowerCase();
-}
+import { NextResponse } from "next/server";
+import type { EntryWrite, MergeStrategy } from "./types";
 
 /**
  * Converts HeadersInit or undefined to a standard Web Headers instance.
@@ -23,42 +16,6 @@ export function headersDiffer(base: Headers, overrides: Headers): boolean {
     if (base.get(key) !== value) return true;
   }
   return false;
-}
-
-/**
- * Checks whether a request header is permitted to be mutated under the configured policy.
- */
-export function isRequestHeaderAllowed(name: string, policy: RequestHeaderPolicy = {}): boolean {
-  const key = normalizeHeaderName(name);
-  const allowed = new Set((policy.allowed ?? []).map(normalizeHeaderName));
-  if (allowed.has(key)) return true;
-  if (key.startsWith("x-middleware-")) return false;
-  const blocked = new Set([
-    ...DEFAULT_BLOCKED_REQUEST_HEADERS.map(normalizeHeaderName),
-    ...(policy.blocked ?? []).map(normalizeHeaderName),
-  ]);
-  return !blocked.has(key);
-}
-
-/**
- * Merges new request header overrides into the target Headers instance, filtering prohibited headers.
- */
-export function mergeRequestHeaderOverrides(
-  target: Headers,
-  overrides: Headers,
-  policy: RequestHeaderPolicy = {},
-): { applied: number; dropped: string[] } {
-  const dropped: string[] = [];
-  let applied = 0;
-  overrides.forEach((value, key) => {
-    if (!isRequestHeaderAllowed(key, policy)) {
-      dropped.push(key);
-      return;
-    }
-    target.set(key, value);
-    applied++;
-  });
-  return { applied, dropped };
 }
 
 /**
@@ -132,9 +89,7 @@ export function responseHeaderItems(headers: Headers): Map<string, string> {
   return map;
 }
 
-/**
- * Decodes Next.js request header overrides encoded into response headers.
- */
+/** Decodes the request header replacement encoded by NextResponse.next(). */
 export function decodeOverriddenRequestHeaders(headers: Headers): Headers {
   const result = new Headers();
   const overrideHeaderNames = headers.get("x-middleware-override-headers");

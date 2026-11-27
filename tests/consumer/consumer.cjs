@@ -1,28 +1,23 @@
 const assert = require("node:assert/strict");
 const api = require("@klnap/next-proxy-chain");
-const { NextRequest } = require("next/server");
+const { NextRequest, NextResponse } = require("next/server");
 
 async function main() {
-  assert.deepEqual(Object.keys(api).sort(), [
-    "RuleTimeoutError",
-    "chain",
-    "defineHandler",
-    "host",
-    "isNextResult",
-    "next",
-    "path",
-  ]);
-  assert.equal(api.isNextResult(api.next()), true);
+  assert.deepEqual(Object.keys(api).sort(), ["chain", "defineHandler"]);
   assert.equal("defineProxy" in api, false);
   assert.equal("proxyChain" in api, false);
 
   const proxy = api.chain([
     api.defineHandler({
       name: "release-check",
-      handler: (request) =>
-        request.nextUrl.pathname === "/release-check"
-          ? api.next({ headers: { "x-package-check": "next" } })
-          : new Response("unexpected route", { status: 500 }),
+      handle: (request) => {
+        if (request.nextUrl.pathname !== "/release-check") {
+          return new Response("unexpected route", { status: 500 });
+        }
+        const response = NextResponse.next();
+        response.headers.set("x-package-check", "native");
+        return response;
+      },
     }),
   ]);
   const response = await proxy(new NextRequest("https://example.com/release-check"), {
@@ -30,21 +25,20 @@ async function main() {
   });
 
   assert.equal(response.headers.get("x-middleware-next"), "1");
-  assert.equal(response.headers.get("x-package-check"), "next");
+  assert.equal(response.headers.get("x-package-check"), "native");
 
   let requestId;
   let signal;
   const contextProxy = api.chain([
     api.defineHandler({
-      handler: (_request, _event, context) => {
+      name: "request-context",
+      handle: (_request, _event, context) => {
         requestId = context.requestId;
         signal = context.signal;
-        return api.next({
-          headers: {
-            "x-package-request-id": context.requestId,
-            "x-original-path": context.originalPathname,
-          },
-        });
+        const response = NextResponse.next();
+        response.headers.set("x-package-request-id", context.requestId);
+        response.headers.set("x-original-path", context.originalPathname);
+        return response;
       },
     }),
   ]);

@@ -1,14 +1,8 @@
 import type { NextFetchEvent } from "next/server";
 import { NextRequest, NextResponse } from "next/server.js";
 
-import { isNextResult } from "./actions";
 import { createApplicationState, createHandlerContext, createRequestMetadata } from "./context";
-import {
-  cookieItemsFromHeaders,
-  headersDiffer,
-  isRequestHeaderAllowed,
-  responseHeaderItems,
-} from "./headers";
+import { cookieItemsFromHeaders, headersDiffer, responseHeaderItems } from "./headers";
 import { createConsoleLogger } from "./logger";
 import { formatTrace, shouldUseColor, supportsUnicode } from "./diagnostics/formatter";
 import { safeDestination, safeDiagnosticText } from "./diagnostics/sanitize";
@@ -46,7 +40,6 @@ import type {
   ChainLogger,
   BaseHandlerRule,
   EntryWrite,
-  NextResult,
   ChainOptions,
   HandlerRule,
   RouteScopeInput,
@@ -143,7 +136,7 @@ function safeLogger(logger: ChainLogger): ChainLogger {
   };
 }
 
-type RuleRaw = NextResponse | Response | NextResult | undefined | void;
+type RuleRaw = NextResponse | Response | undefined | void;
 
 /** NextResponse.next() sets x-middleware-next; it continues the pipeline. */
 function isNextResponse(value: unknown): boolean {
@@ -189,7 +182,6 @@ function resolveConfig<TContext extends object>(
     headerMergeStrategy: "last-write-wins",
     debug: false,
     timeout: 0,
-    requestHeaderPolicy: {},
     strictOverrideCheck: false,
     tracePath: true,
     ...rest,
@@ -215,7 +207,6 @@ export function executeChain<TContext extends object = object>(
     cookieMergeStrategy,
     headerMergeStrategy,
     timeout,
-    requestHeaderPolicy,
     strictOverrideCheck,
   } = config;
   const debug = debugLevel !== false;
@@ -348,16 +339,7 @@ export function executeChain<TContext extends object = object>(
         return currentReq;
       }
       const nextUrl = currentReq.nextUrl.clone();
-      const merged = new Headers();
-      if (replaceRequestHeaders) {
-        currentReq.headers.forEach((value, key) => {
-          if (!isRequestHeaderAllowed(key, requestHeaderPolicy)) merged.set(key, value);
-        });
-      } else {
-        currentReq.headers.forEach((value, key) => {
-          merged.set(key, value);
-        });
-      }
+      const merged = replaceRequestHeaders ? new Headers() : new Headers(currentReq.headers);
       pendingRequestOverrides.forEach((v, k) => {
         merged.set(k, v);
       });
@@ -525,7 +507,7 @@ export function executeChain<TContext extends object = object>(
           return stopFailure(errorPolicy);
         }
         // NextResponse.next() is a Response; treat it as continuation, not a stop.
-        if (isNextResult(recovered) || isNextResponse(recovered)) {
+        if (isNextResponse(recovered)) {
           diagnostics?.push({
             name: safeDiagnosticText(label, 64),
             outcome: "recovered",
@@ -706,12 +688,12 @@ export function executeChain<TContext extends object = object>(
         // A malformed return value is attributed to this rule, like a thrown error.
         let outcome: ResolvedOutcome;
         try {
-          outcome = resolveRuleResult(raw, requestHeaderPolicy, logger, debug);
+          outcome = resolveRuleResult(raw);
         } catch (err) {
           const recovered = await recoverRuleError(err, i, label, activeReq, duration, "result");
           if ("response" in recovered) return recovered.response;
           raw = recovered.raw;
-          outcome = resolveRuleResult(raw, requestHeaderPolicy, logger, debug);
+          outcome = resolveRuleResult(raw);
         }
 
         if (outcome.kind === "continue") {
@@ -750,9 +732,8 @@ export function executeChain<TContext extends object = object>(
                 : {
                     name: safeDiagnosticText(label, 64),
                     outcome: "continue",
-                    source: isNextResult(raw)
-                      ? "next()"
-                      : raw instanceof NextResponse && raw.headers.get("x-middleware-next") === "1"
+                    source:
+                      raw instanceof NextResponse && raw.headers.get("x-middleware-next") === "1"
                         ? "NextResponse.next()"
                         : "undefined",
                     durationMs: duration,

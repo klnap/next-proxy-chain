@@ -67,11 +67,15 @@ describe("documentation examples", () => {
     expect(res.headers.get("x-middleware-request-x-request-id")).toBe(id);
   });
 
-  it("04 headers: request override is forwarded, cookie override is dropped", async () => {
-    const res = await headers(req("http://localhost/"), event);
+  it("04 headers: request and response headers stay separate", async () => {
+    const res = await headers(
+      req("http://localhost/", { headers: { cookie: "session=abc" } }),
+      event,
+    );
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("x-middleware-request-x-user-tier")).toBe("free");
-    expect(res.headers.get("x-middleware-request-cookie")).toBeNull();
+    expect(res.headers.get("x-middleware-request-cookie")).toBe("session=abc");
+    expect(res.headers.get("x-user-tier")).toBeNull();
   });
 
   it("05 redirect and rewrite: redirect stops, rewrite continues into later rules", async () => {

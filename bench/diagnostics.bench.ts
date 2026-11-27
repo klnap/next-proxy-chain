@@ -9,9 +9,9 @@ const request = new NextRequest("https://example.com/work");
 const event = { waitUntil() {} } as never;
 const iterations = 20_000;
 const handlers = [
-  defineHandler({ name: "security", handler: () => undefined }),
-  defineHandler({ name: "session", handler: () => NextResponse.next() }),
-  defineHandler({ name: "analytics", handler: () => undefined }),
+  defineHandler({ name: "security", handle: () => undefined }),
+  defineHandler({ name: "session", handle: () => NextResponse.next() }),
+  defineHandler({ name: "analytics", handle: () => undefined }),
 ];
 const silent = { debug() {}, info() {}, warn() {}, error() {} };
 

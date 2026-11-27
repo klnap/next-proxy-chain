@@ -1,34 +1,39 @@
-import { chain as composeChain, defineHandler, next, path } from "@klnap/next-proxy-chain";
+import { chain as composeChain, defineHandler } from "@klnap/next-proxy-chain";
 import { NextResponse } from "next/server";
 
 // A rewrite keeps the chain going. The next rule sees the rewritten path.
 const localeRewrite = defineHandler({
   name: "locale-rewrite",
-  handler: (req) => {
-    const { pathname } = req.nextUrl;
+  handle: (request) => {
+    const { pathname } = request.nextUrl;
     if (pathname.startsWith("/pl/")) return undefined;
-    return NextResponse.rewrite(new URL(`/pl${pathname}`, req.url));
+    return NextResponse.rewrite(new URL(`/pl${pathname}`, request.url));
   },
 });
 
 // Sees /pl/... because the rewrite above already happened.
 const plOnly = defineHandler({
   name: "pl-only",
-  handler: () => next({ headers: { "content-language": "pl" } }),
+  rules: { include: "/pl/**" },
+  handle: () => {
+    const response = NextResponse.next();
+    response.headers.set("content-language", "pl");
+    return response;
+  },
 });
 
 // Redirects stop the chain: rules after this one do not run.
 const legacyRedirect = defineHandler({
   name: "legacy-redirect",
-  handler: (req) => {
-    if (req.nextUrl.pathname === "/old") {
-      return NextResponse.redirect(new URL("/new", req.url), 308);
+  handle: (request) => {
+    if (request.nextUrl.pathname === "/old") {
+      return NextResponse.redirect(new URL("/new", request.url), 308);
     }
-    return next();
+    return NextResponse.next();
   },
 });
 
-export default composeChain([legacyRedirect, localeRewrite, [plOnly, { include: path("/pl/**") }]]);
+export default composeChain([legacyRedirect, localeRewrite, plOnly]);
 
 // Without a matcher, a locale rewrite would also apply to static files and API routes.
 export const config = {

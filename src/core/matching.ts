@@ -3,7 +3,6 @@ import type {
   CompiledScope,
   HostMatcher,
   PathMatcher,
-  HandlerFilter,
   RouteScopeList,
 } from "./types";
 
@@ -189,7 +188,7 @@ export function toRule<TFn, TContext extends object = object>(
     scopes?.map((s) => {
       if (!s.host && !s.path) {
         throw new Error(
-          "[proxy-chain] include/exclude scope needs `host` or `path`. Build scopes with path() or host().",
+          "[proxy-chain] include/exclude scope needs a path, host, or host/path object.",
         );
       }
       return {
@@ -215,30 +214,6 @@ export function ruleLabel<TFn, TContext extends object = object>(
       ? extractMeaningfulName((rule.run as { name?: string }).name)
       : undefined;
   return extractMeaningfulName(rule.name) ?? runName ?? `rule#${index}`;
-}
-
-/**
- * Decorates a proxy entry with declarative path and host inclusion/exclusion filters.
- */
-export function withPaths<TFn, TContext extends object = object>(
-  entry: TFn | BaseHandlerRule<TFn, TContext>,
-  filter: HandlerFilter,
-): BaseHandlerRule<TFn, TContext> {
-  const base = toRule<TFn, TContext>(entry);
-  const include = compileScopes(filter.include);
-  const exclude = compileScopes(filter.exclude);
-  const name = filter.name ?? base.name;
-  assertIncludeExcludeNoOverlap(include, exclude, name ?? "proxy");
-  return {
-    run: base.run,
-    include,
-    exclude,
-    name,
-    debug: base.debug,
-    timeout: base.timeout,
-    when: base.when,
-    diagnosticRules: { include: filter.include, exclude: filter.exclude },
-  };
 }
 
 /**

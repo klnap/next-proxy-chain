@@ -1,4 +1,5 @@
-import { chain as composeChain, defineHandler, next, path } from "@klnap/next-proxy-chain";
+import { NextResponse } from "next/server";
+import { chain as composeChain, defineHandler } from "@klnap/next-proxy-chain";
 
 type Ctx = { locale?: string };
 
@@ -6,8 +7,10 @@ type Ctx = { locale?: string };
 export function createRequestIdRule() {
   return defineHandler<Ctx>({
     name: "request-id",
-    handler: (req, _event, ctx) => {
-      return next({ request: { "x-request-id": ctx.requestId } });
+    handle: (request, _event, context) => {
+      const headers = new Headers(request.headers);
+      headers.set("x-request-id", context.requestId);
+      return NextResponse.next({ request: { headers } });
     },
   });
 }
@@ -15,10 +18,13 @@ export function createRequestIdRule() {
 export function createLocaleRule(locales: readonly string[], fallback: string) {
   return defineHandler<Ctx>({
     name: "locale",
-    handler: (req) => {
-      const first = req.nextUrl.pathname.split("/")[1] ?? "";
-      if (locales.includes(first)) return next();
-      return next({ headers: { "content-language": fallback } });
+    rules: { include: "/**" },
+    handle: (request) => {
+      const first = request.nextUrl.pathname.split("/")[1] ?? "";
+      if (locales.includes(first)) return NextResponse.next();
+      const response = NextResponse.next();
+      response.headers.set("content-language", fallback);
+      return response;
     },
   });
 }
@@ -26,9 +32,9 @@ export function createLocaleRule(locales: readonly string[], fallback: string) {
 export function createMaintenanceRule(enabled: boolean) {
   return defineHandler<Ctx>({
     name: "maintenance",
-    handler: () => {
+    handle: () => {
       if (enabled) return new Response("Maintenance", { status: 503 });
-      return next();
+      return NextResponse.next();
     },
   });
 }
@@ -37,4 +43,4 @@ const requestId = createRequestIdRule();
 const locale = createLocaleRule(["en", "pl"], "en");
 const maintenance = createMaintenanceRule(false);
 
-export default composeChain<Ctx>([requestId, maintenance, [locale, { include: path("/**") }]]);
+export default composeChain<Ctx>([requestId, maintenance, locale]);

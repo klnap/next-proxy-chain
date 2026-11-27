@@ -35,7 +35,12 @@
     "dist/index.js",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "llms.txt",
+    "docs/api.md",
+    "docs/concepts.md",
+    "docs/guides.md",
+    "docs/security.md"
   ],
   "exports": {
     ".": {

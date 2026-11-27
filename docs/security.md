@@ -1,113 +1,104 @@
 # Security
 
-`@klnap/next-proxy-chain` organizes the code that runs in your Proxy. It does not decide what is allowed. Your rules decide that. This page lists what the library guarantees, what it leaves to you, and the mistakes that are easy to make.
+`@klnap/next-proxy-chain` organizes code that runs in Proxy or Middleware. It does not decide what is allowed. Your rules decide that. This page separates package guarantees from application responsibilities.
 
 ## Trust boundaries
 
-- **Request data is untrusted.** Path, query, cookies, headers, and host can all be set by the client. Rules must treat them as input.
-- **Rules are trusted code.** A rule can set any response header, stop the chain, or rewrite the path. Only put code you trust in the chain.
-- **Upstream responses are data.** If a rule relays a response from another service, the library passes its headers through, except Next.js routing headers, which are removed (see below).
+- **Request data is untrusted.** Paths, queries, cookies, headers, and hosts can be set by clients.
+- **Handlers are trusted code.** A handler can set request headers, response headers, cookies, stop the chain, or rewrite a path.
+- **Upstream responses are data.** Relayed response headers pass through except Next.js routing metadata, which is stripped from terminal responses.
 
 ## Authentication
 
-The library runs your auth check. It does not perform one. A cookie being present is not a session. Verify the session or token on the server, with the same code that protects your data:
+The package runs your authentication check; it does not perform one. A present cookie does not prove a session. Verify the session or token in trusted server code:
 
 ```ts
 const requireSession = defineHandler({
   name: "require-session",
-  handler: async (request) => {
+  handle: async (request) => {
     const session = await verifySession(request.cookies.get("session")?.value);
     if (!session) return NextResponse.redirect(new URL("/login", request.url));
-    return next();
   },
 });
 ```
 
-`verifySession` is your code. Keep in mind that Proxy runs before the route, so a route handler should still check authorization for the data it returns.
+`verifySession` is application-owned. Proxy runs before the route, so route handlers must still authorize access to returned data.
 
-## Server Functions
-
-Server Functions (Server Actions) are sent as POST requests to the route that uses them. A proxy matcher that excludes that route also skips the Server Function calls. Check authentication and authorization inside each Server Function, not only in the proxy.
+Server Functions (Server Actions) use POST requests to their route. Excluding that route from `config.matcher` also skips those calls. Enforce authorization inside each Server Function.
 
 ## Ordering and early responses
 
-A rule that returns a `Response` stops the chain. Rules after it do not run, which means their headers, cookies, and checks are absent from that response.
+A redirect or terminal `Response` stops the chain. Later handlers do not run, so their checks, headers, and cookies are absent.
 
-Put these first:
-
-- security headers (`Content-Security-Policy`, `X-Frame-Options`, `Strict-Transport-Security`),
-- anything that must apply to every response, including redirects.
-
-Put auth checks before any rule that can answer a request on its own, such as a cache or a static response.
-
-[examples/01](../examples/01-quick-start.ts) shows the header-first order.
+Put universal security headers first. Put authentication before handlers that can answer a request, such as cache or static-response handlers.
 
 ## Path matching
 
-- Scopes match the decoded path with no trailing slash. `/admin/` is treated as `/admin`, and `/%61dmin/users` as `/admin/users`. Scope patterns apply to the same form Next.js routes on.
-- `/api/*` matches exactly one segment. `/api/**` matches everything below `/api`. For access control, prefer `**` so that deeper routes are covered.
-- Malformed percent-encoding, such as `%E0%A4%A`, returns `400 Bad Request` before any rule runs.
-- A rule sees the path after rewrites made by earlier rules. Check that the path it protects is the path that Next.js serves.
+- Scopes match decoded paths without a trailing slash. `/%61dmin/users` is matched as `/admin/users`.
+- `/api/*` matches one segment; `/api/**` matches all descendants.
+- Malformed percent encoding returns `400 Bad Request` before handlers run.
+- A handler sees rewrites staged by earlier handlers. Verify that the path it protects is the path Next.js serves.
 
 ## Host matching
 
-The `host` header is set by the client, or by a proxy in front of your app, and is not trusted by default. Host scopes are a routing aid, not an access control on their own. Use them together with your platform's host allowlist.
+The `host` header comes from the client or a proxy and is not trusted by default. Host scopes are routing aids, not access control. Use a platform host allowlist.
 
-- The port is ignored. `admin.example.com:8443` matches `host('admin.example.com')`.
-- A trailing dot is ignored, so `admin.example.com.` matches as well.
-- If `host` is missing, `x-forwarded-host` is used. Only trust that header when a proxy you control sets it.
+- Ports and trailing dots are ignored.
+- Host strings compare case-insensitively. Wildcards match one DNS label.
+- If `host` is missing, matching falls back to `x-forwarded-host`. Trust that header only when a proxy you control sets it.
 
-## Request header overrides
+## Request headers
 
-`next({ request })` sets headers that route handlers and later rules receive. A client cannot set these headers, but a rule can. Overrides go through `requestHeaderPolicy`. By default, these names are blocked:
+`NextResponse.next({ request: { headers } })` uses Next.js's native request-header override mechanism. The supplied `Headers` instance replaces the forwarded header set. Clone `request.headers` to preserve values; omitted values are removed. Later handlers receive the effective replacement.
 
-- `cookie`, `authorization`, `host`, `x-forwarded-host`, `x-forwarded-for`, `x-forwarded-proto`, `x-real-ip`, and hop-by-hop headers,
-- every `x-middleware-*` name.
+There is no package-level header allowlist or blocklist. Handler code chooses which headers to forward. Validate any client-controlled value before using it for identity, authorization, host routing, or rewrite decisions. A forwarded header is not trusted merely because Proxy set it; clients may reach a route directly.
 
-Do not put identity or authorization data into `request` headers unless the rule that sets it is the only source for them, and the route handler trusts only that header. A client that can reach the handler directly can send the same header.
+Request overrides remain separate from outgoing response headers. The package reads Next.js's override metadata to reconstruct the request for later handlers. It strips Next.js routing metadata from terminal responses, including error-recovered responses, so transport instructions are not forwarded as ordinary response headers.
 
-`requestHeaderPolicy.allowed` overrides the default list, including `x-middleware-*` names. Use it only for names your own code controls.
+## Rewrites
+
+Handlers may use native `NextResponse.rewrite()` for internal or external destinations. Validate destinations derived from request data. Do not pass an untrusted redirect or rewrite target through without checking its origin and allowed paths.
 
 ## Response headers and cookies
 
-- Headers from every rule that continued are merged. With the default `last-write-wins`, a later rule can replace an earlier rule's header. Set `headerMergeStrategy` if you need a different rule.
-- Cookies are identified by name, domain, and path. A later `Set-Cookie` with the same identity replaces the earlier one by default. Set `cookieMergeStrategy` to `first-write-wins`, or a function, if an earlier session cookie must not be replaced.
-- Next.js routing headers (`x-middleware-override-headers`, `x-middleware-request-*`) are removed from terminal responses. This includes responses returned by `onError`.
+- Headers from continuing handlers merge onto the final response. `last-write-wins` is the default.
+- Cookies use name, domain, and path identity. A later cookie with the same identity replaces an earlier one by default.
+- Next.js routing headers are stripped from terminal responses. Native `NextResponse.next()` and `NextResponse.rewrite()` metadata is interpreted only as routing behavior, not copied to the client as ordinary response headers.
 
 ## Diagnostics and privacy
 
-Debug output and `onTrace` are off unless explicitly enabled. Diagnostics never include request or response headers, cookies, bodies, context values, or raw errors. Redirect and rewrite query values are redacted.
+Debug logs and `onTrace` are disabled unless enabled. Formatted traces and structured traces omit request and response header values, cookie values, request bodies, application context values, and raw errors. Redirect and rewrite query values are redacted.
 
-Pathnames can still contain user IDs or other personal data. Set `tracePath: false` to omit them from both formatted output and structured traces. Handler names and configured scope strings are sanitized and length-limited before diagnostics; terminal control characters cannot inject ANSI escapes or extra lines.
+Pathnames can contain personal data. `tracePath: false` omits only the original request pathname from the top-level structured trace and formatted request line. It does not hide paths in handler scope details or sanitized rewrite and redirect destinations. Destination query values appear as `?[query]`. Handler names and scope strings are sanitized and length-limited before display.
 
-Treat traces as operational data. External logger callbacks can persist them beyond the request, and the package cannot control their retention, access, or cross-process ordering.
+Treat traces as operational data. Logger callbacks can persist them beyond the request; the package cannot control retention, access, or cross-process ordering.
 
 ## Error recovery
 
-For ordinary handler errors, `onError` decides what happens:
+For ordinary handler errors, handler-level `onError` takes precedence over chain-level `onError`:
 
-- `Response`: the chain stops with it. Earlier headers and cookies are kept.
-- `next()` or `NextResponse.next()`: the chain continues to the next rule. The rule that failed does not run its protection. Use this only for rules that do not enforce access control.
-- nothing, or a throw: `500 Internal Server Error`.
+- `NextResponse.next()` continues after the failed handler.
+- A Web `Response` terminates with that response.
+- `undefined`, `void`, `null`, a throw, or an unsupported return fails closed with `500`.
 
-Timeout recovery is stricter: only a terminal `Response` is accepted. Missing, throwing, or continuing recovery fails closed with `500`. Request-cancellation recovery also accepts only a terminal `Response`; without one, the chain returns `NextResponse.next()` as the framework handoff. Neither fallback guarantees downstream work stops after a client disconnect.
+Timeout and request-cancellation recovery accepts only a terminal Web `Response`; continuation is not allowed. Without timeout recovery, the chain returns `500`, but ignored work may continue. Without cancellation recovery, the chain stops and returns the native `NextResponse.next()` handoff; Next.js may continue downstream routing after a client disconnect. This handoff is not fail-closed.
 
 ## Timeouts
 
-Chain option `timeout` covers the predicate and handler together. A timeout aborts the execution-scoped signal and stops the engine from waiting. Cooperative operations can stop early, but ignored signals, synchronous JavaScript, and side effects cannot be forcibly stopped or undone. Do not use a timeout as a transaction or authorization boundary.
+Handler `timeout` covers its `when` predicate and `handle` together. Timeout or request cancellation aborts the execution-scoped signal and stops the engine from waiting. Cooperative work can stop early; synchronous JavaScript, ignored signals, and side effects cannot be forcibly stopped or undone.
 
-Each handler gets a separate signal. Predicates share their handler's signal. `event.waitUntil()` work is not supervised by the timeout; explicitly passing a handler signal gives that background work the handler scope's lifecycle.
+Each handler execution gets its own signal. The predicate shares that handler's signal. `event.waitUntil()` work is not supervised by the timeout; pass `context.signal` explicitly when background work should follow the handler lifetime.
 
 ## Context
 
-Each request gets an isolated context. Built-in request metadata is immutable; application properties remain mutable. `originalUrl` may contain sensitive query values. Do not log or forward it without redaction. Context values do not enter built-in diagnostics.
+Each request gets isolated context. Built-in request metadata is immutable; application properties are mutable. `originalUrl` may contain sensitive query values. Do not log or forward it without redaction. Context values do not enter built-in diagnostics.
 
 ## Next.js version notes
 
-- Next.js 16 runs `proxy.ts` on the Node.js runtime by default. A `runtime` setting is not allowed in `proxy.ts`.
-- Next.js 15 `middleware.ts` can run on the Edge runtime. The library uses only Web APIs, but the Edge runtime has not been tested here.
-- A `matcher` in `config` decides which paths Next.js sends to the Proxy at all. A scope in this library cannot widen that set. Keep the matcher and the scopes consistent, so that a path you protect is in both.
+- Next.js 16 uses `proxy.ts` and the Node.js runtime by default. Proxy does not accept a `runtime` setting.
+- Next.js 15 uses `middleware.ts` and may run on Edge. Edge behavior must be verified separately for the target release.
+- `config.matcher` decides which paths reach Proxy or Middleware. Handler scopes cannot widen that set.
 
 ## Reporting a vulnerability
 
-Please do not open a public issue for a security problem. Report it privately through GitHub's private vulnerability reporting: open the repository's **Security** tab and choose **Report a vulnerability**.
+Do not open a public issue for a security problem. Use GitHub's private vulnerability reporting from the repository's **Security** tab.

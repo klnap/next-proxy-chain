@@ -1,26 +1,19 @@
-export { isNextResult, next } from "./core/actions";
-export type { ChainEntry, ChainScope } from "./core/chain";
+export type { ChainEntry } from "./core/chain";
 export { chain } from "./core/chain";
 export { defineHandler } from "./core/handler";
-export type { DefinedHandler } from "./core/handler";
 export type { HandlerContext, RequestMetadata } from "./core/context";
-export { host, path } from "./core/matching";
-export { RuleTimeoutError } from "./core/timeout";
 export type {
   ChainLogger,
   ChainOptions,
+  HandlerConfig,
   HostMatcher,
   MergeStrategy,
   NativeProxy,
-  NextOptions,
-  NextResult,
   OnErrorHandler,
   OnErrorResult,
   PathMatcher,
-  RequestHeaderPolicy,
 } from "./core/types";
 export type {
-  HandlerDebugOptions,
   HandlerDiagnosticDetails,
   HandlerWhen,
   TraceCallback,

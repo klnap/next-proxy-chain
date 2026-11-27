@@ -1,8 +1,9 @@
+import { nextWithResponseHeaders } from "../helpers/native-response";
 import { describe, expect, it } from "bun:test";
 import type { NextFetchEvent } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
 import { assertOverrideMechanismSupported } from "../../src/core/pipeline";
-import { chain as composeChain, defineHandler, next } from "../../src/index";
+import { chain as composeChain, defineHandler } from "../../src/index";
 
 describe("Proxy Chain Pipeline Integration", () => {
   const fakeEvent = {} as NextFetchEvent;
@@ -11,27 +12,26 @@ describe("Proxy Chain Pipeline Integration", () => {
     expect(() => assertOverrideMechanismSupported()).not.toThrow();
   });
 
-  it("threads isolated context and propagates mutated headers between sequential rules", async () => {
+  it("threads context and native request headers between sequential rules", async () => {
     type Context = { userId?: string };
     const authRule = defineHandler<Context>({
       name: "auth",
-      handler: (_req, _event, ctx) => {
+      handle: (req, _event, ctx) => {
         ctx.userId = "usr_9921";
-        return next({
-          request: { "x-user-id": "usr_9921" },
-          headers: { "x-auth-applied": "true" },
-        });
+        const headers = new Headers(req.headers);
+        headers.set("x-user-id", "usr_9921");
+        const response = NextResponse.next({ request: { headers } });
+        response.headers.set("x-auth-applied", "true");
+        return response;
       },
     });
 
     const enrichRule = defineHandler<Context>({
       name: "enrich",
-      handler: (req, _event, ctx) => {
+      handle: (req, _event, ctx) => {
         expect(ctx.userId).toBe("usr_9921");
         expect(req.headers.get("x-user-id")).toBe("usr_9921");
-        return next({
-          headers: { "x-enrich-applied": "true" },
-        });
+        return nextWithResponseHeaders({ "x-enrich-applied": "true" });
       },
     });
 
@@ -46,7 +46,7 @@ describe("Proxy Chain Pipeline Integration", () => {
   it("detects NextResponse.next() pass-through with override headers", async () => {
     const externalPassThrough = defineHandler({
       name: "external",
-      handler: () => {
+      handle: () => {
         return NextResponse.next({
           request: {
             headers: new Headers({ "x-injected": "true" }),
@@ -57,7 +57,7 @@ describe("Proxy Chain Pipeline Integration", () => {
 
     const downstream = defineHandler({
       name: "downstream",
-      handler: (req) => {
+      handle: (req) => {
         expect(req.headers.get("x-injected")).toBe("true");
         return new NextResponse("success", { status: 200 });
       },
@@ -79,8 +79,8 @@ describe("Proxy Chain Pipeline Integration", () => {
   });
 
   it("handles all rules returning undefined or void cleanly", async () => {
-    const noop1 = defineHandler({ name: "noop1", handler: () => undefined });
-    const noop2 = defineHandler({ name: "noop2", handler: () => {} });
+    const noop1 = defineHandler({ name: "noop1", handle: () => undefined });
+    const noop2 = defineHandler({ name: "noop2", handle: () => {} });
     const chain = composeChain([noop1, noop2]);
     const req = new NextRequest("http://localhost:3000/hello");
     const res = await chain(req, fakeEvent);
@@ -97,7 +97,7 @@ describe("Proxy Chain Pipeline Integration", () => {
   it("catches unhandled rule errors and returns safe 500 status", async () => {
     const failingRule = defineHandler({
       name: "failing",
-      handler: () => {
+      handle: () => {
         throw new Error("unexpected breakdown");
       },
     });
@@ -111,7 +111,7 @@ describe("Proxy Chain Pipeline Integration", () => {
   it("handles onError handler exceptions with safe 500 status", async () => {
     const failingRule = defineHandler({
       name: "failing",
-      handler: () => {
+      handle: () => {
         throw new Error("initial error");
       },
     });
@@ -131,7 +131,7 @@ describe("Proxy Chain Pipeline Integration", () => {
   it("allows onError handler to recover with custom terminal Response", async () => {
     const failingRule = defineHandler({
       name: "failing",
-      handler: () => {
+      handle: () => {
         throw new Error("unauthorized access");
       },
     });
@@ -148,13 +148,13 @@ describe("Proxy Chain Pipeline Integration", () => {
   it("fails closed when onError returns nothing", async () => {
     const failing = defineHandler({
       name: "auth",
-      handler: () => {
+      handle: () => {
         throw new Error("auth failed");
       },
     });
     const downstream = defineHandler({
       name: "downstream",
-      handler: () => next({ headers: { "x-leaked": "1" } }),
+      handle: () => nextWithResponseHeaders({ "x-leaked": "1" }),
     });
     const chain = composeChain([failing, downstream], {
       logger: silentLogger,
@@ -167,30 +167,27 @@ describe("Proxy Chain Pipeline Integration", () => {
     expect(res.headers.get("x-leaked")).toBeNull();
   });
 
-  it("continues the pipeline when onError returns next()", async () => {
+  it("continues the pipeline when onError returns NextResponse.next()", async () => {
     const failing = defineHandler({
       name: "flaky",
-      handler: () => {
+      handle: () => {
         throw new Error("transient");
       },
     });
     const downstream = defineHandler({
       name: "downstream",
-      handler: () => next({ headers: { "x-recovered": "1" } }),
+      handle: () => nextWithResponseHeaders({ "x-recovered": "1" }),
     });
-    const chain = composeChain([failing, downstream], { onError: () => next() });
+    const chain = composeChain([failing, downstream], { onError: () => NextResponse.next() });
     const res = await chain(new NextRequest("http://localhost:3000/"), fakeEvent);
     expect(res.status).toBe(200);
     expect(res.headers.get("x-recovered")).toBe("1");
   });
 
-  it("forwards Set-Cookie from next() onto the final response", async () => {
+  it("forwards Set-Cookie from NextResponse.next() onto the final response", async () => {
     const one = defineHandler({
       name: "one",
-      handler: () =>
-        next({
-          headers: { "set-cookie": "session=abc; Path=/" },
-        }),
+      handle: () => nextWithResponseHeaders({ "set-cookie": "session=abc; Path=/" }),
     });
     const chain = composeChain([one]);
     const res = await chain(new NextRequest("http://localhost:3000/"), fakeEvent);
@@ -198,16 +195,14 @@ describe("Proxy Chain Pipeline Integration", () => {
     expect(cookies.some((c) => c.startsWith("session=abc"))).toBe(true);
   });
 
-  it("forwards multiple Set-Cookie values from next()", async () => {
+  it("forwards multiple Set-Cookie values from NextResponse.next()", async () => {
     const cookies = defineHandler({
       name: "cookies",
-      handler: () =>
-        next({
-          headers: [
-            ["set-cookie", "a=1; Path=/"],
-            ["set-cookie", "b=2; Path=/"],
-          ],
-        }),
+      handle: () =>
+        nextWithResponseHeaders([
+          ["set-cookie", "a=1; Path=/"],
+          ["set-cookie", "b=2; Path=/"],
+        ]),
     });
     const chain = composeChain([cookies]);
     const res = await chain(new NextRequest("http://localhost:3000/"), fakeEvent);
@@ -216,14 +211,14 @@ describe("Proxy Chain Pipeline Integration", () => {
     expect(listed.some((c) => c.startsWith("b=2"))).toBe(true);
   });
 
-  it("merges Set-Cookie from next() with NextResponse.next() cookies", async () => {
+  it("merges Set-Cookie from NextResponse.next() with NextResponse.next() cookies", async () => {
     const viaNext = defineHandler({
       name: "viaNext",
-      handler: () => next({ headers: { "set-cookie": "from-next=1; Path=/" } }),
+      handle: () => nextWithResponseHeaders({ "set-cookie": "from-next=1; Path=/" }),
     });
     const viaResponse = defineHandler({
       name: "viaResponse",
-      handler: () => {
+      handle: () => {
         const res = NextResponse.next();
         res.cookies.set("from-response", "2", { path: "/" });
         return res;
@@ -239,13 +234,11 @@ describe("Proxy Chain Pipeline Integration", () => {
   it("keeps same-name cookies with different Path", async () => {
     const cookies = defineHandler({
       name: "cookies",
-      handler: () =>
-        next({
-          headers: [
-            ["set-cookie", "session=foo; Path=/"],
-            ["set-cookie", "session=bar; Path=/admin"],
-          ],
-        }),
+      handle: () =>
+        nextWithResponseHeaders([
+          ["set-cookie", "session=foo; Path=/"],
+          ["set-cookie", "session=bar; Path=/admin"],
+        ]),
     });
     const chain = composeChain([cookies]);
     const res = await chain(new NextRequest("http://localhost:3000/"), fakeEvent);
@@ -258,11 +251,11 @@ describe("Proxy Chain Pipeline Integration", () => {
   it("deletes a header from the terminal response when merge returns null", async () => {
     const first = defineHandler({
       name: "first",
-      handler: () => next({ headers: { "x-remove": "1", "x-keep": "1" } }),
+      handle: () => nextWithResponseHeaders({ "x-remove": "1", "x-keep": "1" }),
     });
     const terminal = defineHandler({
       name: "terminal",
-      handler: () => new NextResponse("ok", { headers: { "x-remove": "2", "x-keep": "2" } }),
+      handle: () => new NextResponse("ok", { headers: { "x-remove": "2", "x-keep": "2" } }),
     });
     const chain = composeChain([first, terminal], {
       headerMergeStrategy: (key, _existing, incoming) => (key === "x-remove" ? null : incoming),
@@ -275,13 +268,13 @@ describe("Proxy Chain Pipeline Integration", () => {
   it("does not mutate the original NextRequest on rewrite continuation", async () => {
     const rewriter = defineHandler({
       name: "rewriter",
-      handler: (req) => NextResponse.rewrite(new URL(`/shop${req.nextUrl.pathname}`, req.url)),
+      handle: (req) => NextResponse.rewrite(new URL(`/shop${req.nextUrl.pathname}`, req.url)),
     });
     const downstream = defineHandler({
       name: "downstream",
-      handler: (req) => {
+      handle: (req) => {
         expect(req.nextUrl.pathname).toBe("/shop/pl/produkty");
-        return next();
+        return NextResponse.next();
       },
     });
     const chain = composeChain([rewriter, downstream]);
@@ -298,9 +291,9 @@ describe("Proxy Chain Pipeline Integration", () => {
     type Ctx = { user?: string };
     const rule = defineHandler<Ctx>({
       name: "typed",
-      handler: (_req, _event, ctx) => {
+      handle: (_req, _event, ctx) => {
         ctx.user = "ada";
-        return next({ headers: { "x-user": ctx.user } });
+        return nextWithResponseHeaders({ "x-user": ctx.user });
       },
     });
     const chain = composeChain<Ctx>([rule]);

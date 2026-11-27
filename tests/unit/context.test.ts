@@ -1,29 +1,19 @@
 import { describe, expect, it } from "bun:test";
-import { isNextResult, next } from "../../src/index";
 import {
   createApplicationState,
   createHandlerContext,
   createRequestMetadata,
 } from "../../src/core/context";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-describe("Context and Action Primitives", () => {
-  it("produces branded next continuation tokens", () => {
-    const continuation = next({
-      request: { "x-user": "test" },
-      headers: { "x-res": "value" },
+describe("Context primitives", () => {
+  it("encodes native request header replacements on NextResponse.next()", () => {
+    const continuation = NextResponse.next({
+      request: { headers: new Headers({ "x-user": "test" }) },
     });
 
-    expect(isNextResult(continuation)).toBe(true);
-    expect(continuation.request).toEqual({ "x-user": "test" });
-    expect(continuation.headers).toEqual({ "x-res": "value" });
-  });
-
-  it("distinguishes next continuation tokens from regular responses and nulls", () => {
-    expect(isNextResult(new Response())).toBe(false);
-    expect(isNextResult(null)).toBe(false);
-    expect(isNextResult(undefined)).toBe(false);
-    expect(isNextResult({})).toBe(false);
+    expect(continuation.headers.get("x-middleware-next")).toBe("1");
+    expect(continuation.headers.get("x-middleware-request-x-user")).toBe("test");
   });
 
   it("keeps defined application properties consistent across context views", () => {

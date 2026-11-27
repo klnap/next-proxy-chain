@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { NextFetchEvent } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
-import { chain as composeChain, defineHandler, next, path } from "../../src";
+import { chain as composeChain, defineHandler } from "../../src";
 
 const mockEvent = {} as NextFetchEvent;
 
@@ -9,30 +9,29 @@ describe("Next.js 15 Integration: middleware.ts cycle", () => {
   it("executes as a standard Next.js 15 middleware export", async () => {
     const requestIdProxy = defineHandler({
       name: "requestId",
-      handler: (req) => {
+      handle: (req) => {
         const id = req.headers.get("x-request-id") ?? "req_test_15";
-        return next({
-          request: { "x-request-id": id },
-          headers: { "x-request-id": id },
-        });
+        const headers = new Headers(req.headers);
+        headers.set("x-request-id", id);
+        const response = NextResponse.next({ request: { headers } });
+        response.headers.set("x-request-id", id);
+        return response;
       },
     });
 
     const authProxy = defineHandler({
       name: "auth",
-      handler: (req) => {
+      rules: { include: "/dashboard/*" },
+      handle: (req) => {
         const cookie = req.cookies.get("auth_session")?.value;
         if (!cookie) {
           return NextResponse.redirect(new URL("/login", req.url));
         }
-        return next();
+        return NextResponse.next();
       },
     });
 
-    const middleware = composeChain([
-      requestIdProxy,
-      [authProxy, { include: path("/dashboard/*") }],
-    ]);
+    const middleware = composeChain([requestIdProxy, authProxy]);
 
     // 1. Unauthenticated request to /dashboard -> 307 redirect
     const unauthReq = new NextRequest("https://example.com/dashboard/settings");

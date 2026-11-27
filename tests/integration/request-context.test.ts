@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { NextFetchEvent } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
 import type { ChainTrace } from "../../src/core/diagnostics/types";
-import { chain, defineHandler, next } from "../../src/index";
+import { chain, defineHandler } from "../../src/index";
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} };
 const event = { waitUntil() {} } as unknown as NextFetchEvent;
@@ -19,7 +19,7 @@ describe("request context", () => {
     let trace: ChainTrace | undefined;
     const rewrite = defineHandler({
       name: "rewrite",
-      handler: (_request, _event, context) => {
+      handle: (_request, _event, context) => {
         expect(context.requestId).toMatch(
           /^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
         );
@@ -28,7 +28,7 @@ describe("request context", () => {
     });
     const inspect = defineHandler({
       name: "inspect",
-      handler: (request, _event, context) => {
+      handle: (request, _event, context) => {
         seen.push({
           requestId: context.requestId,
           pathname: request.nextUrl.pathname,
@@ -36,7 +36,7 @@ describe("request context", () => {
           originalPathname: context.originalPathname,
           originalHostname: context.originalHostname,
         });
-        return next();
+        return NextResponse.next();
       },
     });
     const proxy = chain([rewrite, inspect], {
@@ -75,12 +75,12 @@ describe("request context", () => {
     let predicateSignal: AbortSignal | undefined;
     const first = defineHandler<AppContext>({
       name: "first",
-      handler: (_request, _event, context) => {
+      handle: (_request, _event, context) => {
         expect(context.userId).toBeUndefined();
         context.userId = "user-123";
         firstContext = context;
         firstSignal = context.signal;
-        return next();
+        return NextResponse.next();
       },
     });
     const second = defineHandler<AppContext>({
@@ -93,13 +93,13 @@ describe("request context", () => {
           return context.userId === "user-123";
         },
       },
-      handler: (_request, _event, context) => {
+      handle: (_request, _event, context) => {
         expect(context.userId).toBe("user-123");
         expect(context === predicateContext).toBe(true);
         expect(context.signal === predicateSignal).toBe(true);
         expect(context === firstContext).toBe(false);
         expect(context.signal === firstSignal).toBe(false);
-        return next();
+        return NextResponse.next();
       },
     });
 
@@ -117,10 +117,11 @@ describe("request context", () => {
     let context: Record<string, unknown> | undefined;
     type Context = { applicationState?: string };
     const capture = defineHandler<Context>({
-      handler: (_request, _event, value) => {
+      name: "capture-reserved",
+      handle: (_request, _event, value) => {
         context = value as unknown as Record<string, unknown>;
         value.applicationState = "mutable";
-        return next();
+        return NextResponse.next();
       },
     });
     await chain<Context>([capture], { logger: silent })(
@@ -152,7 +153,8 @@ describe("request context", () => {
   it("isolates application state between concurrent requests", async () => {
     type AppContext = { userId: string };
     const setThenRead = defineHandler<AppContext>({
-      handler: async (request, _event, context) => {
+      name: "set-then-read",
+      handle: async (request, _event, context) => {
         context.userId = request.headers.get("x-user") ?? "missing";
         await new Promise((resolve) => setTimeout(resolve, 5));
         return new Response(context.userId);
@@ -179,9 +181,17 @@ describe("request context", () => {
     const completed = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const setHeader = defineHandler({ handler: () => next({ request: { "x-chain": "1" } }) });
+    const setHeader = defineHandler({
+      name: "set-header",
+      handle: (request) => {
+        const headers = new Headers(request.headers);
+        headers.set("x-chain", "1");
+        return NextResponse.next({ request: { headers } });
+      },
+    });
     const waitForAbort = defineHandler({
-      handler: async (request) => {
+      name: "wait-for-abort",
+      handle: async (request) => {
         reconstructedSignal = request.signal;
         markEntered();
         await new Promise<void>((resolve) => {
@@ -207,12 +217,13 @@ describe("request context", () => {
     let startedAt = 0;
     let elapsedMs = 0;
     const capture = defineHandler({
-      handler: async (_request, _event, context) => {
+      name: "capture-clock",
+      handle: async (_request, _event, context) => {
         startedAt = context.startedAt;
         Date.now = () => startedAt - 60_000;
         await new Promise((resolve) => setTimeout(resolve, 10));
         elapsedMs = context.elapsedMs;
-        return next();
+        return NextResponse.next();
       },
     });
     try {

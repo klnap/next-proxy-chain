@@ -1,18 +1,18 @@
 // proxy.ts (Next.js 16) or middleware.ts (Next.js 15)
-import { chain as composeChain, defineHandler, next } from "@klnap/next-proxy-chain";
+import { chain as composeChain, defineHandler } from "@klnap/next-proxy-chain";
 import { type NextRequest, NextResponse } from "next/server";
 
-// A native Next.js handler: (request, event). No wrapper needed.
-function localeRedirect(req: NextRequest) {
-  if (req.nextUrl.pathname === "/") {
-    return NextResponse.redirect(new URL("/en", req.url));
+// A native Next.js handle: (request, event). No wrapper needed.
+function localeRedirect(request: NextRequest) {
+  if (request.nextUrl.pathname === "/") {
+    return NextResponse.redirect(new URL("/en", request.url));
   }
   return NextResponse.next();
 }
 
 // Native handler with background work through event.waitUntil.
-function analytics(req: NextRequest, event: { waitUntil(p: Promise<unknown>): void }) {
-  event.waitUntil(Promise.resolve(req.nextUrl.pathname));
+function analytics(request: NextRequest, event: { waitUntil(p: Promise<unknown>): void }) {
+  event.waitUntil(Promise.resolve(request.nextUrl.pathname));
   return NextResponse.next();
 }
 
@@ -20,16 +20,17 @@ function analytics(req: NextRequest, event: { waitUntil(p: Promise<unknown>): vo
 type Session = { user?: string };
 const readSession = defineHandler<Session>({
   name: "read-session",
-  handler: (req, _event, session) => {
-    session.user = req.cookies.get("user")?.value;
-    return next();
+  handle: (request, _event, context) => {
+    context.user = request.cookies.get("user")?.value;
+    return NextResponse.next();
   },
 });
 const requireUser = defineHandler<Session>({
   name: "require-user",
-  handler: (req, _event, session) => {
-    if (!session.user) return NextResponse.redirect(new URL("/login", req.url));
-    return next();
+  rules: { include: "/dashboard/**" },
+  handle: (request, _event, context) => {
+    if (!context.user) return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.next();
   },
 });
 
@@ -38,6 +39,5 @@ export default composeChain<Session>([
   analytics,
   // Rules run in array order. The session must be read before a rule uses it.
   readSession,
-  // Scoped tuple: the rule runs only for these paths.
-  [requireUser, "/dashboard/**"],
+  requireUser,
 ]);

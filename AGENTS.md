@@ -2,6 +2,17 @@
 
 These rules govern future work in this repository. Follow repository engineering requirements and preserve unrelated user changes.
 
+## Public handler contract
+
+- `chain()` accepts native handler functions and configured handler objects.
+- Configured handlers require a non-empty `name` and a `handle` function. `rules`, `timeout`, `debug`, and `onError` are optional.
+- Use `request`, `event`, and `context` for parameters a callback uses. Prefix intentionally unused positional parameters with `_` when later arguments need their positions; omit unused trailing parameters without reordering.
+- `chain()` and `defineHandler()` are the only public runtime exports. Use native `NextResponse` and Web APIs for HTTP effects.
+- Inline and reusable handler configurations share one contract and normalization path. Never restore the removed `handler` property or package-specific continuation API.
+- Keep inline handler objects and `defineHandler()` on the same `HandlerConfig` type and runtime path. `defineHandler()` returns its input configuration unchanged.
+- Next.js `config.matcher` owns entrypoint invocation. Handler `rules.include` and `rules.exclude` only filter handlers after invocation.
+- Scope matching uses the active request at each handler's turn, including prior continued rewrites and native request-header replacements. Original request metadata stays unchanged.
+
 ## Ownership and working model
 
 - The user authorizes the full package development and release lifecycle: create task branches, implement and verify changes, commit, push, create and update PRs, approve eligible GitHub Actions runs, merge verified PRs, manage Changesets, merge generated Release PRs, complete npm Trusted Publishing, verify publication, synchronize branches, and clean up completed branches.

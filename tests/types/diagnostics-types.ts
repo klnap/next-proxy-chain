@@ -16,7 +16,7 @@ const auth = defineHandler<Context>({
       return pathname.startsWith("/dashboard") && Boolean(context.user);
     },
   },
-  handler: (_request, event, context) => {
+  handle: (_request, event, context) => {
     const user: string | undefined = context.user;
     event.waitUntil(Promise.resolve(user));
     return NextResponse.next({ headers: new Headers({ "x-user": user ?? "" }) });
@@ -43,7 +43,7 @@ export const configured = composeChain<Context>([auth], {
 defineHandler({
   // @ts-expect-error unsupported debug level
   debug: "trace",
-  handler: (_request: NextRequest, _event: NextFetchEvent) => undefined,
+  handle: (_request: NextRequest, _event: NextFetchEvent) => undefined,
 });
 
 void configured;

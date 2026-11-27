@@ -1,20 +1,15 @@
-import { chain as composeChain, defineHandler, next } from "@klnap/next-proxy-chain";
+import { NextResponse } from "next/server";
+import { chain as composeChain, defineHandler } from "@klnap/next-proxy-chain";
 
-// `request` changes what downstream rules and the route handler receive.
-// `headers` changes what the browser receives.
 const tagUser = defineHandler({
   name: "tag-user",
-  handler: () =>
-    next({
-      request: { "x-user-tier": "free" },
-      headers: { "cache-control": "no-store" },
-    }),
+  handle: (request) => {
+    const headers = new Headers(request.headers);
+    headers.set("x-user-tier", "free");
+    const response = NextResponse.next({ request: { headers } });
+    response.headers.set("cache-control", "no-store");
+    return response;
+  },
 });
 
-// Cookie and Authorization cannot be set through `request` by default.
-const tryToOverrideCookie = defineHandler({
-  name: "try-override-cookie",
-  handler: () => next({ request: { cookie: "session=attacker" } }),
-});
-
-export default composeChain([tagUser, tryToOverrideCookie]);
+export default composeChain([tagUser]);

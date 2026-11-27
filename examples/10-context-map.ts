@@ -1,4 +1,4 @@
-import { chain as composeChain, defineHandler, next } from "@klnap/next-proxy-chain";
+import { chain as composeChain, defineHandler } from "@klnap/next-proxy-chain";
 import { NextResponse } from "next/server";
 
 type Context = { session?: { user: string } };
@@ -6,21 +6,22 @@ type Context = { session?: { user: string } };
 // Sets a value. Later rules in the chain can read it.
 const readSession = defineHandler<Context>({
   name: "read-session",
-  handler: (req, _event, ctx) => {
-    const user = req.cookies.get("user")?.value;
-    if (user) ctx.session = { user };
-    return next();
+  handle: (request, _event, context) => {
+    const user = request.cookies.get("user")?.value;
+    if (user) context.session = { user };
+    return NextResponse.next();
   },
 });
 
 // Reads the value back.
 const requireUser = defineHandler<Context>({
   name: "require-user",
-  handler: (req, _event, ctx) => {
-    const session = ctx.session;
-    if (!session) return NextResponse.redirect(new URL("/login", req.url));
-    return next();
+  rules: { include: "/dashboard/**" },
+  handle: (request, _event, context) => {
+    const session = context.session;
+    if (!session) return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.next();
   },
 });
 
-export default composeChain<Context>([readSession, [requireUser, "/dashboard/**"]]);
+export default composeChain<Context>([readSession, requireUser]);

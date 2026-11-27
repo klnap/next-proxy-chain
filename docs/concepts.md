@@ -1,142 +1,88 @@
 # Concepts
 
-This page describes how a request moves through a chain. Read it before writing rules that stop requests, change headers, or recover from errors.
-
-## One request, one pass
-
-`chain` returns a single function. Next.js calls it once per request. It runs the handlers in array order, one at a time:
-
-1. Check whether the rule's `include` and `exclude` scopes match the request. If not, skip the rule.
-2. Run the rule with the current request and the request's context.
-3. Read the result: continue, or stop with a response.
-
-If every rule continues, the chain ends with `NextResponse.next()`, or with a rewrite if a rule staged one.
-
-## Two kinds of rules
-
-- A **native handler** is a plain function `(request, event)`. `chain()` passes the native arguments unchanged and adds request context as an optional third argument.
-- A **configured handler** is created with `defineHandler()`. It receives `(request, event, context)`. Context metadata and state are created for each request.
-
-Both kinds run in array order, follow the same continuation rules, and can be scoped with a tuple.
-
-## Continue or stop
-
-| A rule returns                                               | Effect                                                                  |
-| :----------------------------------------------------------- | :---------------------------------------------------------------------- |
-| `next()` or nothing                                          | Continue to the next rule.                                              |
-| `next({ request, headers })`                                 | Continue. Request headers are passed on, response headers are queued.   |
-| `NextResponse.rewrite(url)`                                  | Continue. The rewrite applies at the end, unless a later rule stops.    |
-| `NextResponse.next()`                                        | Continue. Its request-header overrides and cookies are carried forward. |
-| `Response`, `NextResponse.redirect()`, `NextResponse.json()` | Stop and return that response.                                          |
-
-Stopping is immediate. Rules after a stopping rule never run, so their headers, cookies, and checks are not applied. This matters most for security headers. See [Ordering](#ordering-and-early-responses).
-
-## Scoping
-
-A rule can take an `include` and an `exclude`:
+`chain()` composes native handlers. `defineHandler()` defines a reusable configured handler. `handle` contains the handler's native Next.js logic; Next.js owns HTTP responses.
 
 ```ts
-[authHandler, { include: path("/admin/**"), exclude: path("/admin/login") }];
+import { chain } from "@klnap/next-proxy-chain";
+import { NextResponse } from "next/server";
+
+export default chain([
+  (request, event) => {
+    event.waitUntil(writeAuditLog(request));
+    if (request.nextUrl.pathname === "/") {
+      return NextResponse.redirect(new URL("/home", request.url));
+    }
+  },
+  {
+    name: "security",
+    handle: () => {
+      const response = NextResponse.next();
+      response.headers.set("x-content-type-options", "nosniff");
+      return response;
+    },
+  },
+]);
 ```
 
-- No `include`: the rule runs for every request.
-- With `include`: the rule runs only when at least one include matches.
-- `exclude` wins: a matching `exclude` skips the rule even if `include` matches.
+## Execution
 
-Paths and hosts are matched against the path that Next.js resolves: percent-decoded, without a trailing slash. See [Path patterns](api.md#path) for the pattern syntax.
+Handlers execute in order. A `NextResponse.next()` or `undefined` continues. A successful `NextResponse.rewrite()` stages a rewrite and continues. A redirect or terminal `Response` stops the chain. If every handler continues, the chain returns a pass-through response or the final staged rewrite.
 
-Rule-level scope is checked before the rule runs. A skipped rule has no effect at all.
+The original request object is not mutated. When a continued rewrite or native request-header override changes request state, later handlers receive a reconstructed `NextRequest`. Original URL, path, and hostname remain in chain context.
 
-## Request headers and response headers
+## Matching
 
-These are two separate channels:
+Next.js `config.matcher` is the outer filter. It decides whether Middleware or Proxy runs at all.
 
-- **Request headers** change what downstream code sees: other rules, route handlers, and server components. Set them with `next({ request })`.
-- **Response headers** change what the browser sees. Set them with `next({ headers })`, or by returning a `Response` that has them. Keep them to safe values such as `cache-control` and security headers. Next.js advises against proxy-set `Content-Type`, which can break Server Actions; see [the API notes](api.md#next).
+Configured-handler `rules.include` and `rules.exclude` are inner filters. They accept paths, host/path objects, strings, and regular expressions. Exclusions take precedence. The optional async `when(request, event, context)` predicate runs after scope matching.
 
-The distinction matters because a header you set for downstream code is not sent to the browser, and a header you send to the browser is not visible to route handlers.
+```ts
+{
+  name: "admin-auth",
+  rules: {
+    include: { host: "admin.example.com", path: "/admin/**" },
+    exclude: "/admin/login",
+  },
+  handle: (request) => {
+    if (!hasSession(request)) {
+      return NextResponse.redirect(new URL("/login", request.url));
+    }
+  },
+}
+```
 
-Request overrides are merged into the request for later rules, and then forwarded to Next.js. The `requestHeaderPolicy` option controls which names may be set. By default, `cookie`, `authorization`, `host`, and several proxy headers cannot be overridden. See [Security](security.md#request-header-overrides).
+Later matching uses the effective request, including prior rewrite paths and request-header replacements. Rewrites do not change the host used for matching; host scopes read the effective `host` header, falling back to `x-forwarded-host`. A prior header replacement of either value affects later host matching.
 
-Request overrides always use last-write-wins. The header merge strategies apply only to response headers and cookies.
+## Native HTTP composition
 
-## Response headers and cookies
+The chain does not wrap responses in another API. Handlers return `NextResponse` or Web `Response` directly.
 
-Headers from every rule that continued, plus the final response, are merged into one result:
+| Handler returns              | Effect                                                 |
+| ---------------------------- | ------------------------------------------------------ |
+| `undefined`                  | Continue without adding HTTP effects.                  |
+| `NextResponse.next()`        | Continue and compose its response headers and cookies. |
+| `NextResponse.rewrite(url)`  | Stage the rewrite; continue through later handlers.    |
+| `NextResponse.redirect(url)` | Stop and redirect.                                     |
+| Terminal `Response`          | Stop and return it.                                    |
 
-- Each rule's response headers are recorded in order. If two rules set the same header, `headerMergeStrategy` decides which value wins. The default is `last-write-wins`.
-- `Set-Cookie` values are keyed by name, domain, and path. `session` on `/` and `session` on `/admin` are two separate cookies and both survive. A cookie with the same key is handled by `cookieMergeStrategy`.
-- A custom merge function that returns `null` removes that header or cookie from the response.
+Request headers passed in `NextResponse.next({ request: { headers } })` replace the forwarded request-header set. Clone `request.headers` to preserve existing values. The engine decodes Next.js's internal override metadata so later handlers see the same effective headers. Request headers do not become response headers.
 
-Headers from rules that continued before a stopping rule are still merged into its response. Headers from rules after it are not.
+Response headers and cookies from continuing handlers are collected and merged into the final response. The defaults use last-write-wins. Cookies with different name/domain/path identities remain distinct.
 
 ## Context
 
-Each request gets an ID, immutable metadata, and isolated application state. Rules can read and write application properties. Nothing survives the request.
+The chain creates request-scoped metadata and an execution-scoped `AbortSignal`. `requestId`, `startedAt`, `elapsedMs`, `originalUrl`, `originalPathname`, and `originalHostname` describe the original request. Custom typed state is shared between handlers in one request and isolated across requests.
 
-```ts
-const setUser = defineHandler({
-  name: "set-user",
-  handler: (_request, _event, context) => {
-    context.userId = "usr_123";
-    return next();
-  },
-});
-```
-
-Type the application state with `chain<Context>(...)`; its properties are optional until set. Use finite-key object types; broad string index signatures make `HandlerContext<T>` resolve to `never`. Built-in properties include `requestId`, `startedAt`, `elapsedMs`, `originalUrl`, `originalPathname`, `originalHostname`, and the current execution's `signal`. These properties are read-only. See the [typed context guide](guides.md#share-typed-state-between-rules).
-
-Context is not the place to pass data to the browser. Use response headers or cookies for that.
-
-## Rewrites
-
-A rewrite changes the path for the rules that follow:
-
-- The rewrite is staged, not applied at once. The next rule sees the rewritten pathname in `req.nextUrl.pathname`, so scopes match the new path.
-- The original request object is not mutated.
-- If a later rule returns a `Response`, the rewrite is dropped and that response is returned.
-
-Example: a locale rule rewrites `/about` to `/pl/about`, and a later rule scoped to `path('/pl/**')` runs for it. See [examples/05](../examples/05-redirect-and-rewrite.ts).
-
-## Redirects
-
-A redirect stops the chain, like any `Response`. Rules after it do not run. Put checks that must always run before any rule that might redirect, or before the redirect rule itself.
-
-## Ordering and early responses
-
-Rules are not reordered. The order in the array is the order of execution.
-
-Two patterns are common:
-
-- **Security headers first.** A header rule placed before an auth rule still sets its header on a redirect from the auth rule. A header rule placed after does not.
-- **Check the path you mean.** A rule placed after a rewrite sees the rewritten path. Place a redirect before a rewrite if it should match the original URL.
-
-See [examples/01](../examples/01-quick-start.ts) for the first pattern.
+Custom state fields may be `undefined` before initialization. They are not forwarded to route handlers unless a handler explicitly encodes them into request headers.
 
 ## Errors and timeouts
 
-A rule can throw. What happens next depends on `onError`:
+The handler's `timeout` and `when` predicate share a deadline. Timeout or request cancellation aborts the execution signal and stops the pipeline from waiting; ignored work can continue. A cooperative handler should pass `context.signal` to cancellable work.
 
-| Situation                                           | Result                                                                            |
-| :-------------------------------------------------- | :-------------------------------------------------------------------------------- |
-| Rule throws, no `onError`                           | `500 Internal Server Error`. Later rules do not run.                              |
-| `onError` returns a `Response`                      | The chain stops with that response. Earlier headers and cookies are still merged. |
-| `onError` returns `next()` or `NextResponse.next()` | The chain continues with the next rule.                                           |
-| `onError` returns nothing                           | `500 Internal Server Error`.                                                      |
-| `onError` throws                                    | `500 Internal Server Error`.                                                      |
+For ordinary errors, handler-level `onError` wins over chain-level `onError`. `NextResponse.next()` continues after that failed handler; a `Response` terminates. Timeouts, request cancellation, and engine-level failures cannot resume the chain. They accept only a terminal Web `Response` as recovery.
 
-`onError` receives the error and the index of the rule that threw. Index `-1` means the error came from the engine itself, after all rules ran or while reading a rule's return value. No rule is left to continue to, so only a `Response` is honored there. `next()` or `NextResponse.next()` returns `500`.
+## Diagnostics
 
-Chain option `timeout` gives each handler and its predicate one shared deadline. A timeout aborts that handler's signal, stops the chain, and is reported as `RuleTimeoutError`. The engine stops waiting even when user code ignores the signal; ignored work may continue in the background.
+Formatted diagnostics include one outcome per handler. Compact `reached/total` counts include skipped outcomes, because their scope or predicate was evaluated; handlers after a terminal response count only in `total`.
 
-Ordinary errors may recover with a response or continue with `next()`. Timeout and request-cancellation recovery accepts only a terminal response. Without timeout recovery, the chain fails closed with `500`. Without cancellation recovery, it returns `NextResponse.next()` as the framework handoff. Recovery runs with a separate signal and context view.
-
-When a rule continues after `onError` returns `next()`, that rule's own result is skipped, and the rules after it run as usual. Use this only when skipping the rule is safe for your application.
-
-## Summary
-
-- Rules run in order. A stopping rule ends the chain.
-- Scopes are checked before a rule runs.
-- Request headers go downstream. Response headers go to the browser.
-- Context is per request.
-- Errors fail closed unless `onError` says otherwise.
+`onTrace` receives structured data with request ID, outcome, timing, and handler details. `tracePath: false` omits the original request pathname from the top-level trace and formatted request line; scope details and sanitized rewrite or redirect destination paths remain visible. Destination query values are replaced with `?[query]`. The formatter sanitizes and truncates displayed names and destinations.

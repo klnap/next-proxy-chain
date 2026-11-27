@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.0
+
+### Major Changes
+
+- 149aab5: Simplify the public runtime API to `chain()` and `defineHandler()`, rename configured handlers' executable property from `handler` to `handle`, and remove the package-specific `next()` continuation helper and tuple entries. Use native Next.js responses and request-header replacement semantics for HTTP effects.
+
+### Patch Changes
+
+- 2bdae7f: Fix error recovery routing: timeout, request-cancellation, and engine-level recovery now accept only terminal responses, so a recovered `NextResponse.rewrite()` or continuation no longer routes past later handlers. Ordinary errors recovered with a successful rewrite continue as a staged rewrite. Structured traces now record exactly one outcome per handler after a recovered failure. Path matchers keep each alternative's RegExp flags, so `/^\/ABC$/i` matches `/abc`.
+
 ## 2.0.0
 
 ### Major Changes

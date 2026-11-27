@@ -143,6 +143,8 @@ type RuleRaw = NextResponse | Response | undefined | void;
  * rewrite classified by resolveRuleResult would resume it, so only a stop response qualifies.
  */
 function isTerminalRecovery(value: unknown): value is Response {
+  // Next.js routes on x-middleware-rewrite whatever the status, so any native rewrite is routing.
+  if (value instanceof NextResponse && value.headers.get("x-middleware-rewrite")) return false;
   return value instanceof Response && resolveRuleResult(value).kind === "stop";
 }
 
@@ -157,17 +159,19 @@ type RecoveredRule = {
   details: HandlerTrace["details"];
 };
 
-/** Terminal responses must not carry Next.js request-override headers into routing. */
+/**
+ * A terminal response is handed to Next.js, which routes on x-middleware-next and x-middleware-rewrite
+ * whatever the HTTP status. Every routing control header is removed, so the status and body stand alone.
+ */
 function stripRoutingOverrides(res: Response): Response {
-  // A plain Response is not a Next.js continuation, so every x-middleware-* control header goes.
-  const plain = !(res instanceof NextResponse);
   const keys = [...res.headers.keys()];
   const remove = keys.filter((key) => {
     const lower = key.toLowerCase();
     return (
       lower === "x-middleware-override-headers" ||
       lower.startsWith("x-middleware-request-") ||
-      (plain && (lower === "x-middleware-next" || lower === "x-middleware-rewrite"))
+      lower === "x-middleware-next" ||
+      lower === "x-middleware-rewrite"
     );
   });
   if (!remove.length) return res;

@@ -1,6 +1,6 @@
 {
   "name": "@klnap/next-proxy-chain",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Composable proxy and middleware for Next.js.",
   "repository": {
     "type": "git",

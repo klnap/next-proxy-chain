@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.1
+
+### Patch Changes
+
+- 8a67a83: Fix host scope matching when several host regular expressions are declared together. Each alternative is now compiled independently, so backreferences in one alternative no longer bind to another alternative's capture group.
+
 ## 3.0.0
 
 ### Major Changes

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.2
+
+### Patch Changes
+
+- 6152c52: Add top-level `main` and `types` entries so TypeScript projects that use `moduleResolution: "node"` resolve the package types. Next.js 15 generates that setting by default, and it ignored the `exports` map, so `import { chain } from "@klnap/next-proxy-chain"` failed type checking. Runtime exports and the `exports` map are unchanged.
+
 ## 3.0.1
 
 ### Patch Changes

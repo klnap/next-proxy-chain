@@ -42,6 +42,8 @@
     "docs/guides.md",
     "docs/security.md"
   ],
+  "main": "./dist/index.cjs",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "import": {

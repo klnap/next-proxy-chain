@@ -155,9 +155,9 @@ Custom state is shared between handlers for one request and isolated across requ
 
 `timeout` is a per-handler execution budget in milliseconds; `0` disables timeouts. A handler's timeout overrides the chain timeout. The handler's predicate shares its budget. Timeout aborts the execution signal and stops the chain.
 
-Handler-level `onError` takes precedence over chain-level `onError`. For ordinary errors, returning `NextResponse.next()` continues after the failed handler. Returning a `Response` terminates with that response. Returning `undefined`, `void`, or `null`, throwing, or returning an unsupported value fails closed.
+Handler-level `onError` takes precedence over chain-level `onError`. For ordinary errors, returning `NextResponse.next()` or a successful `NextResponse.rewrite()` continues after the failed handler; a rewrite is staged like a normal rewrite. Returning any other `Response` terminates with that response. Returning `undefined`, `void`, or `null`, throwing, or returning an unsupported value fails closed.
 
-For timeout and request cancellation, recovery accepts only a terminal Web `Response`; `NextResponse.next()` cannot resume execution. Without recovery, timeout returns `500`. Cancellation stops the package chain and returns a native `NextResponse.next()` handoff; Next.js may continue downstream routing, so this is not a fail-closed response. Engine-level failures also cannot resume. Error diagnostics record the chosen recovery policy.
+For timeout, request cancellation, and engine-level failures, recovery accepts only a terminal Web `Response`, including a redirect. `NextResponse.next()` and successful `NextResponse.rewrite()` are rejected because they would resume routing. A rejected timeout or engine-level recovery returns `500`. Without recovery, timeout returns `500`. Cancellation stops the package chain and returns a native `NextResponse.next()` handoff; Next.js may continue downstream routing, so this is not a fail-closed response. Error diagnostics record the chosen recovery policy.
 
 ## Chain options
 

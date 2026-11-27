@@ -278,9 +278,9 @@ export default chain(
 
 Pass `context.signal` to work that supports cooperative cancellation. A timeout or request cancellation stops the chain from waiting, but cannot stop synchronous JavaScript or work that ignores its signal. `event.waitUntil()` work is outside the handler timeout.
 
-For ordinary errors, handler-level `onError` takes precedence over chain-level `onError`. Returning `NextResponse.next()` continues after the failed handler. A terminal `Response` stops the chain.
+For ordinary errors, handler-level `onError` takes precedence over chain-level `onError`. Returning `NextResponse.next()` or a successful `NextResponse.rewrite()` continues after the failed handler. A terminal `Response` stops the chain.
 
-Timeout and request-cancellation recovery accepts only a terminal Web `Response`. Without recovery, a timeout returns `500`. Cancellation stops this chain and returns a native `NextResponse.next()` handoff. Next.js may continue downstream routing, so cancellation is not a fail-closed response.
+Timeout, request-cancellation, and engine-level recovery accept only a terminal Web `Response`; continuation and `NextResponse.rewrite()` are rejected. Without recovery, a timeout returns `500`. Cancellation stops this chain and returns a native `NextResponse.next()` handoff. Next.js may continue downstream routing, so cancellation is not a fail-closed response.
 
 ### Debugging and observability
 

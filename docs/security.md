@@ -77,11 +77,11 @@ Treat traces as operational data. Logger callbacks can persist them beyond the r
 
 For ordinary handler errors, handler-level `onError` takes precedence over chain-level `onError`:
 
-- `NextResponse.next()` continues after the failed handler.
+- `NextResponse.next()` and a successful `NextResponse.rewrite()` continue after the failed handler.
 - A Web `Response` terminates with that response.
 - `undefined`, `void`, `null`, a throw, or an unsupported return fails closed with `500`.
 
-Timeout and request-cancellation recovery accepts only a terminal Web `Response`; continuation is not allowed. Without timeout recovery, the chain returns `500`, but ignored work may continue. Without cancellation recovery, the chain stops and returns the native `NextResponse.next()` handoff; Next.js may continue downstream routing after a client disconnect. This handoff is not fail-closed.
+Timeout, request-cancellation, and engine-level recovery accept only a terminal Web `Response`. Continuation and `NextResponse.rewrite()` are rejected, so a timed-out gate cannot rewrite a request past later handlers. This is routing correctness, not an authorization guarantee: the application remains responsible for its own access checks. Without timeout recovery, the chain returns `500`, but ignored work may continue. Without cancellation recovery, the chain stops and returns the native `NextResponse.next()` handoff; Next.js may continue downstream routing after a client disconnect. This handoff is not fail-closed.
 
 ## Timeouts
 

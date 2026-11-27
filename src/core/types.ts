@@ -25,7 +25,8 @@ export type RouteScopeList = RouteScopeInput | RouteScopeInput[];
 /** Compiled route scope evaluated during request execution. */
 export type CompiledScope = {
   host?: RegExp;
-  path?: RegExp;
+  /** Independent alternatives with OR semantics; each keeps its own flags. */
+  path?: RegExp[];
 };
 
 export interface BaseHandlerRule<TFn, TContext extends object = object> {

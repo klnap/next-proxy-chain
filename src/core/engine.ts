@@ -138,10 +138,24 @@ function safeLogger(logger: ChainLogger): ChainLogger {
 
 type RuleRaw = NextResponse | Response | undefined | void;
 
-/** NextResponse.next() sets x-middleware-next; it continues the pipeline. */
-function isNextResponse(value: unknown): boolean {
-  return value instanceof NextResponse && value.headers.get("x-middleware-next") === "1";
+/**
+ * Timeout, cancellation, and engine recovery must end routing. A continuation or successful
+ * rewrite classified by resolveRuleResult would resume it, so only a stop response qualifies.
+ */
+function isTerminalRecovery(value: unknown): value is Response {
+  return value instanceof Response && resolveRuleResult(value).kind === "stop";
 }
+
+/** Ordinary error recovery that continues: a native continuation or a successful rewrite. */
+function isContinuingRecovery(value: unknown): boolean {
+  return value instanceof Response && resolveRuleResult(value).kind === "continue";
+}
+
+type RecoveredRule = {
+  durationMs: number;
+  policy: "handler" | "chain";
+  details: HandlerTrace["details"];
+};
 
 /** Terminal responses must not carry Next.js request-override headers into routing. */
 function stripRoutingOverrides(res: Response): Response {
@@ -372,7 +386,9 @@ export function executeChain<TContext extends object = object>(
       req: NextRequest,
       durationMs: number,
       phase: "before-handler" | "when" | "handler" | "result",
-    ): Promise<{ raw: RuleRaw } | { response: NextResponse | Response }> => {
+    ): Promise<
+      { raw: RuleRaw; recovered: RecoveredRule } | { response: NextResponse | Response }
+    > => {
       const timeoutError = err instanceof RuleTimeoutError;
       const requestCancelled = err instanceof RequestCancellationError;
       const errorHandler = rules[i]!.onError ?? config.onError;
@@ -446,7 +462,7 @@ export function executeChain<TContext extends object = object>(
           errorHandler(err, i, req, contextFor(signal)),
         );
         if (timeoutError || requestCancelled) {
-          if (recovered instanceof Response && !isNextResponse(recovered)) {
+          if (isTerminalRecovery(recovered)) {
             const response = stripRoutingOverrides(recovered);
             headerWrites.push({
               ruleIndex: i,
@@ -506,18 +522,9 @@ export function executeChain<TContext extends object = object>(
         if (recovered == null) {
           return stopFailure(errorPolicy);
         }
-        // NextResponse.next() is a Response; treat it as continuation, not a stop.
-        if (isNextResponse(recovered)) {
-          diagnostics?.push({
-            name: safeDiagnosticText(label, 64),
-            outcome: "recovered",
-            durationMs,
-            recovery: "continue",
-            policy: errorPolicy,
-            details,
-          });
-          nextHandlerIndex = i + 1;
-          return { raw: recovered };
+        // Continuation and successful rewrite resume through the normal result path, which records the trace.
+        if (isContinuingRecovery(recovered)) {
+          return { raw: recovered, recovered: { durationMs, policy: errorPolicy, details } };
         }
         if (!(recovered instanceof Response)) {
           diagnostics?.push({
@@ -640,6 +647,8 @@ export function executeChain<TContext extends object = object>(
         const effectiveTimeout = rule.timeout ?? timeout;
         let phase: "when" | "handler" = rule.when ? "when" : "handler";
         let result: { kind: "skipped" } | { kind: "result"; raw: RuleRaw };
+        // Set only when this handler's own error recovery continued the chain.
+        let recoveredRule: RecoveredRule | undefined;
         try {
           result = await runInExecutionScope(
             req.signal,
@@ -681,6 +690,7 @@ export function executeChain<TContext extends object = object>(
           );
           if ("response" in recovered) return recovered.response;
           result = { kind: "result", raw: recovered.raw };
+          recoveredRule = recovered.recovered;
         }
 
         let raw = result.raw;
@@ -693,6 +703,7 @@ export function executeChain<TContext extends object = object>(
           const recovered = await recoverRuleError(err, i, label, activeReq, duration, "result");
           if ("response" in recovered) return recovered.response;
           raw = recovered.raw;
+          recoveredRule = recovered.recovered;
           outcome = resolveRuleResult(raw);
         }
 
@@ -718,7 +729,17 @@ export function executeChain<TContext extends object = object>(
             cookieWrites.push({ ruleIndex: i, ruleName: label, items: outcome.cookies });
           }
 
-          if (diagnostics?.at(-1)?.outcome !== "recovered") {
+          // Exactly one entry per handler: the recovery entry or the normal outcome, never both.
+          if (recoveredRule) {
+            diagnostics?.push({
+              name: safeDiagnosticText(label, 64),
+              outcome: "recovered",
+              durationMs: recoveredRule.durationMs,
+              recovery: outcome.rewriteUrl ? "rewrite" : "continue",
+              policy: recoveredRule.policy,
+              details: recoveredRule.details,
+            });
+          } else {
             diagnostics?.push(
               outcome.rewriteUrl
                 ? {
@@ -846,7 +867,7 @@ export function executeChain<TContext extends object = object>(
             config.onError!(err, -1, materializeRequest(), contextFor(signal)),
           );
           // No later rule can run here, so a continuation response would skip them. Fail closed.
-          if (recovered instanceof Response && !isNextResponse(recovered)) {
+          if (isTerminalRecovery(recovered)) {
             const response = stripRoutingOverrides(recovered);
             return finish(
               finalizeResponse(

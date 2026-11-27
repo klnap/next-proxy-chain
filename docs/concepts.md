@@ -79,7 +79,7 @@ Custom state fields may be `undefined` before initialization. They are not forwa
 
 The handler's `timeout` and `when` predicate share a deadline. Timeout or request cancellation aborts the execution signal and stops the pipeline from waiting; ignored work can continue. A cooperative handler should pass `context.signal` to cancellable work.
 
-For ordinary errors, handler-level `onError` wins over chain-level `onError`. `NextResponse.next()` continues after that failed handler; a `Response` terminates. Timeouts, request cancellation, and engine-level failures cannot resume the chain. They accept only a terminal Web `Response` as recovery.
+For ordinary errors, handler-level `onError` wins over chain-level `onError`. `NextResponse.next()` and a successful `NextResponse.rewrite()` continue after that failed handler; any other `Response` terminates. Timeouts, request cancellation, and engine-level failures cannot resume the chain. They accept only a terminal Web `Response` as recovery; a continuing or rewriting recovery is rejected.
 
 ## Diagnostics
 

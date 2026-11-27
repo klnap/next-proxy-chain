@@ -121,11 +121,10 @@ export function path(pattern: string | RegExp): RegExp {
   return compileStringPath(pattern);
 }
 
-function toPathRegex(matcher: PathMatcher | PathMatcher[]): RegExp {
+/** Compiles each alternative separately: joining sources would drop per-alternative flags such as `i`. */
+function toPathRegexes(matcher: PathMatcher | PathMatcher[]): RegExp[] {
   const list = (Array.isArray(matcher) ? matcher : [matcher]) as (string | RegExp)[];
-  const regexes = list.map((m) => path(m));
-  if (regexes.length === 1) return toStatelessRegExp(regexes[0]!);
-  return toStatelessRegExp(new RegExp(`(?:${regexes.map((r) => `(?:${r.source})`).join("|")})`));
+  return list.map((m) => toStatelessRegExp(path(m)));
 }
 
 /**
@@ -135,7 +134,7 @@ export function compileScopes(input: RouteScopeList | undefined): CompiledScope[
   if (input == null) return undefined;
   const list = Array.isArray(input) ? input : [input];
 
-  const compilePath = (matcher: PathMatcher | PathMatcher[]): RegExp => toPathRegex(matcher);
+  const compilePath = (matcher: PathMatcher | PathMatcher[]): RegExp[] => toPathRegexes(matcher);
 
   const compiled: CompiledScope[] = [];
   for (const item of list) {
@@ -163,7 +162,7 @@ function scopeMatches(pathname: string, hostname: string | null, scope: Compiled
     if (!hostname || !scope.host.test(hostname)) return false;
   }
   if (scope.path) {
-    if (!scope.path.test(pathname)) return false;
+    if (!scope.path.some((alternative) => alternative.test(pathname))) return false;
   }
   return true;
 }
@@ -193,7 +192,7 @@ export function toRule<TFn, TContext extends object = object>(
       }
       return {
         host: s.host ? toStatelessRegExp(s.host) : undefined,
-        path: s.path ? toStatelessRegExp(s.path) : undefined,
+        path: s.path?.map(toStatelessRegExp),
       };
     });
 
@@ -282,7 +281,10 @@ export function canonicalPathname(pathname: string): string | null {
 }
 
 function scopeKey(scope: CompiledScope): string {
-  return `${scope.host?.source ?? "*"}::${scope.host?.flags ?? ""}|${scope.path?.source ?? "*"}::${scope.path?.flags ?? ""}`;
+  const path = scope.path
+    ?.map((alternative) => `${alternative.source}::${alternative.flags}`)
+    .join("&");
+  return `${scope.host?.source ?? "*"}::${scope.host?.flags ?? ""}|${path ?? "*"}`;
 }
 
 /**

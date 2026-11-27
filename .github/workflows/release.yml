@@ -129,7 +129,12 @@ jobs:
           const integrity = `sha256-${createHash("sha256").update(bytes).digest("base64")}`;
           if (integrity !== release.tarball.integrity) throw new Error("Packed tarball integrity does not match Changesets publish plan.");
           const files = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" }).trim().split("\n");
-          const allowed = new Set(["package/package.json", "package/README.md", "package/CHANGELOG.md", "package/LICENSE", "package/dist/index.cjs", "package/dist/index.d.cts", "package/dist/index.d.ts", "package/dist/index.js"]);
+          const allowed = new Set([
+            "package/package.json", "package/README.md", "package/CHANGELOG.md", "package/LICENSE",
+            "package/llms.txt", "package/docs/api.md", "package/docs/concepts.md", "package/docs/guides.md",
+            "package/docs/security.md",
+            "package/dist/index.cjs", "package/dist/index.d.cts", "package/dist/index.d.ts", "package/dist/index.js",
+          ]);
           if (files.some((file) => !allowed.has(file))) throw new Error(`Unexpected tarball file: ${files.find((file) => !allowed.has(file))}`);
           const pkg = JSON.parse(execFileSync("tar", ["-xOf", tarball, "package/package.json"], { encoding: "utf8" }));
           if (pkg.name !== release.name || pkg.version !== release.version) throw new Error("Tarball identity does not match the Changesets release plan.");
@@ -137,7 +142,12 @@ jobs:
           if (pkg.private === true || pkg.publishConfig?.access !== "public" || pkg.publishConfig?.registry !== "https://registry.npmjs.org/") throw new Error("Tarball publishing metadata is unsafe.");
           const entry = pkg.exports?.["."];
           if (Object.keys(pkg.exports ?? {}).join() !== "." || entry?.import?.types !== "./dist/index.d.ts" || entry?.import?.default !== "./dist/index.js" || entry?.require?.types !== "./dist/index.d.cts" || entry?.require?.default !== "./dist/index.cjs") throw new Error("Unexpected package exports.");
-          for (const file of ["package/dist/index.cjs", "package/dist/index.d.cts", "package/dist/index.d.ts", "package/dist/index.js"]) {
+          for (const file of [
+            "package/package.json", "package/README.md", "package/CHANGELOG.md", "package/LICENSE",
+            "package/llms.txt", "package/docs/api.md", "package/docs/concepts.md", "package/docs/guides.md",
+            "package/docs/security.md",
+            "package/dist/index.cjs", "package/dist/index.d.cts", "package/dist/index.d.ts", "package/dist/index.js",
+          ]) {
             if (!files.includes(file)) throw new Error(`Missing tarball file: ${file}`);
           }
            const consumer = path.join(process.env.RUNNER_TEMP, "release-consumer");

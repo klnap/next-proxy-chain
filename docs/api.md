@@ -1,268 +1,190 @@
 # API reference
 
-Everything is exported from `@klnap/next-proxy-chain`.
+The runtime entry exports two functions:
 
 ```ts
-import {
-  chain,
-  defineHandler,
-  host,
-  isNextResult,
-  next,
-  path,
-  RuleTimeoutError,
-} from "@klnap/next-proxy-chain";
-import type { HandlerContext, RequestMetadata } from "@klnap/next-proxy-chain";
+import { chain, defineHandler } from "@klnap/next-proxy-chain";
 ```
 
-## `chain`
+Next.js owns HTTP responses. Use `NextResponse` from `next/server` and standard Web `Response`, `Headers`, and `AbortSignal`.
 
-Composes native Next.js proxy handlers, defineHandler() results, and scoped tuples into one handler.
+## `chain()`
 
 ```ts
-chain(entries);
-chain(entries, options);
-chain<TContext>(entries, options);
+chain<TContext extends object = object>(
+  entries: readonly ChainEntry<TContext>[],
+  options?: ChainOptions<TContext>,
+): (request: NextRequest, event: NextFetchEvent) => Promise<NextResponse | Response>
 ```
 
-`entries` is an array. Each entry is one of:
+`chain()` accepts native handler functions and configured handler objects. Entries run sequentially. A `NextResponse.next()` or `undefined` continues; redirects and terminal responses stop.
 
-| Entry                                         | Receives                                                        | Notes                                                                                                                                  |
-| :-------------------------------------------- | :-------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------- |
-| A plain function `(request, event, context?)` | `request`, `event`, and `context` as an optional third argument | The native Next.js signature. Next.js passes only two arguments; `chain()` adds the request context third.                             |
-| A `defineHandler()` result                    | `request`, `event`, and `context`                               | Use for named handlers, local rules, typed context, and per-handler settings.                                                          |
-| A tuple `[handler, scope]`                    | As above, only when the scope matches                           | `scope` is a path string, an array of paths, a RegExp, or an object `{ include?, exclude? }`. Include objects can also contain `host`. |
-
-`chain()` runs entries in array order. It returns a function that Next.js calls as `default` export of `proxy.ts` or `middleware.ts`.
+## `defineHandler()`
 
 ```ts
-export default chain([intlProxy, [authProxy, "/dashboard/**"], securityProxy]);
+defineHandler<TContext extends object = object>(
+  options: HandlerConfig<TContext>,
+): HandlerConfig<TContext>
 ```
 
-A plain handler keeps the native Next.js signature. The optional third context argument is supplied only by `chain()`.
+It validates and returns the same configuration object. Inline and reusable configurations have the same type and normalization behavior.
 
-## `defineHandler`
-
-Defines a native-signature handler with an optional name, route rules, timeout, and local debug level.
+## Configured handler
 
 ```ts
-const authHandler = defineHandler<Context>({
-  name: "auth",
-  debug: "verbose",
-  timeout: 2000,
-  rules: {
-    include: ["/dashboard/**", "/account/**"],
-    exclude: "/account/login",
-    when: (request, event, context) => Boolean(context.user),
+type HandlerConfig<TContext extends object = object> = {
+  name: string;
+  rules?: {
+    include?: RouteScopeList;
+    exclude?: RouteScopeList;
+    when?: HandlerWhen<TContext>;
+  };
+  timeout?: number;
+  debug?: DebugLevel;
+  onError?: OnErrorHandler<TContext>;
+  handle: NativeProxy<TContext>;
+};
+```
+
+`name` must be a non-empty string. `handle` must be a function. `rules`, `timeout`, `debug`, and `onError` are optional. `handle` appears last in examples by convention, not requirement.
+
+```ts
+defineHandler({
+  name: "authentication",
+  rules: { include: "/dashboard/**" },
+  timeout: 500,
+  debug: true,
+  onError: handleError,
+  handle: async (request, event, context) => {
+    return authenticate(request, event, context.signal);
   },
-  handler: (request, event, context) => authenticate(request, event, context),
 });
 ```
 
-The handler receives `(request, event, context)`. `rules.when` runs after include/exclude matching and before the handler. It shares the handler's signal and deadline; an unset handler timeout inherits chain `timeout`.
+Arrow functions are the primary convention for `handle`, `when`, and `onError`. Async functions, function references, and object method syntax also satisfy the contract.
 
-The optional handler-level `onError` replaces the chain-level `onError` for that handler. If it returns `undefined`, `null`, or throws, the request fails closed; the chain-level handler is not tried afterward. Verbose diagnostics identify which policy handled the error.
-
-## `next`
+## Native handler
 
 ```ts
-next(options?: NextOptions): NextResult
+type NativeProxy<TContext extends object = object> = (
+  request: NextRequest,
+  event: NextFetchEvent,
+  context: HandlerContext<TContext>,
+) =>
+  | NextResponse
+  | Response
+  | undefined
+  | void
+  | Promise<NextResponse | Response | undefined | void>;
 ```
 
-Continues to the next rule.
+Two-argument Next.js handlers remain composable. The chain adds context as the optional third callback argument and passes through the original `event`.
+
+## Matching
+
+`Next.js config.matcher` filters whether the entrypoint runs. Handler `rules` filter configured handlers after entrypoint invocation.
+
+- `include` and `exclude` accept a path string, `RegExp`, or objects with `path` and/or `host`.
+- `*` matches one path segment. `**` matches zero or more segments.
+- `exclude` takes precedence over `include`.
+- `when(request, event, context)` may return a boolean or `Promise<boolean>`.
+- Matching uses the effective request at each handler's turn. A continued rewrite changes later path matching and the query visible to predicates; original context metadata remains unchanged.
+- Rewrites do not change the host used for matching. Host scopes read the effective `host` header, falling back to `x-forwarded-host`; a prior native request-header replacement of either header changes later host matching.
+
+Host matcher strings compare case-insensitively and ignore ports. Host wildcards match one DNS label. See [Concepts](concepts.md#matching) for examples.
+
+## Return values
+
+| Handler returns              | Chain behavior                                    |
+| ---------------------------- | ------------------------------------------------- |
+| `undefined`                  | Continue to the next handler.                     |
+| `NextResponse.next()`        | Compose HTTP effects and continue.                |
+| `NextResponse.rewrite(url)`  | Stage the rewrite and continue to later handlers. |
+| `NextResponse.redirect(url)` | Stop and redirect.                                |
+| Terminal `Response`          | Stop and return the response.                     |
+
+Only `NextResponse` routing responses are interpreted as continuation or rewrite instructions. A plain `Response` remains terminal, even if it contains Next.js routing headers.
+
+`NextResponse.rewrite()` continues only for a successful rewrite response. Non-success responses are terminal. Redirects are terminal.
+
+## Request headers
+
+Use native `NextResponse.next({ request: { headers } })`. Next.js treats `headers` as the replacement request-header set, not a partial merge. Clone the effective request headers to preserve them:
 
 ```ts
-type NextOptions = {
-  request?: HeadersInit; // request headers for downstream code
-  headers?: HeadersInit; // response headers; set-cookie entries become cookies
-};
+const headers = new Headers(request.headers);
+headers.set("x-request-id", context.requestId);
+return NextResponse.next({ request: { headers } });
 ```
 
-`request` values pass through `requestHeaderPolicy`. Header names in `headers` are merged according to `headerMergeStrategy`, and cookies according to `cookieMergeStrategy`.
+Removing a header means deleting it from the `Headers` instance before returning it. A replacement that omits a prior request header deletes that header downstream.
 
-`headers` are sent to the browser on the response Next.js returns. Next.js advises against setting response headers from the proxy this way, because a header such as `Content-Type` can break Server Actions and streaming responses. Keep proxy response headers to safe values like `cache-control` and security headers, and set anything else in the route.
+Each continued native override becomes the effective request seen by later rules. The engine reconstructs `NextRequest` using Next.js's encoded override metadata, while retaining staged rewrite URL state, request signal, and original chain metadata. Request headers remain separate from client-facing response headers.
 
-## `isNextResult`
+There is no package-level request-header allow/deny policy. Handler code explicitly chooses the forwarded header set. Validate untrusted values before adding or changing headers.
+
+## Response headers and cookies
+
+Mutate the native response:
 
 ```ts
-isNextResult(value: unknown): value is NextResult
+const response = NextResponse.next();
+response.headers.set("x-content-type-options", "nosniff");
+response.cookies.set("locale", "en");
+return response;
 ```
 
-True for values returned by `next()`. `NextResponse.next()` returns a `Response`, not a `NextResult`, and is handled separately.
+Continued response headers and cookies compose onto the final response. The default merge strategy is last-write-wins. `headerMergeStrategy` and `cookieMergeStrategy` can select `"first-write-wins"` or a custom resolver; returning `null` from a resolver removes that header or cookie identity.
 
-## `path`
+Cookie identity includes cookie name, domain, and path. Distinct paths remain distinct.
 
-```ts
-path(pattern: string | RegExp): RegExp
-```
+## Context and cancellation
 
-Compiles a path pattern. The result is a stateless `RegExp` that matches the decoded pathname with no trailing slash.
+`HandlerContext<TContext>` contains:
 
-String patterns:
+- `requestId`: generated `req_` identifier.
+- `startedAt`: request start time.
+- `elapsedMs`: elapsed request duration.
+- `originalUrl`, `originalPathname`, and `originalHostname`: original request metadata.
+- `signal`: execution-scoped `AbortSignal`.
+- Custom properties from `TContext`.
 
-| Pattern      | Matches                                | Does not match              |
-| :----------- | :------------------------------------- | :-------------------------- |
-| `/api/*`     | `/api/users`                           | `/api`, `/api/users/123`    |
-| `/api/**`    | `/api`, `/api/users`, `/api/users/123` | `/apix`                     |
-| `/users/:id` | `/users/42`                            | `/users`, `/users/42/posts` |
+Custom state is shared between handlers for one request and isolated across requests. Properties may be `undefined` until initialized. Context and request IDs are not forwarded to route handlers automatically.
 
-`:name` matches one segment. It does not capture a value. Use `req.nextUrl.pathname` if you need the segment.
+## Errors and timeouts
 
-`*` and `**` must be a whole segment. A segment such as `*.pdf` throws when the rule is created, instead of matching a literal.
+`timeout` is a per-handler execution budget in milliseconds; `0` disables timeouts. A handler's timeout overrides the chain timeout. The handler's predicate shares its budget. Timeout aborts the execution signal and stops the chain.
 
-A RegExp is matched as written. If it has neither `^` nor `$`, the whole path must match. A one-sided anchor gives a prefix or suffix match, so anchor both ends for an exact match:
+Handler-level `onError` takes precedence over chain-level `onError`. For ordinary errors, returning `NextResponse.next()` continues after the failed handler. Returning a `Response` terminates with that response. Returning `undefined`, `void`, or `null`, throwing, or returning an unsupported value fails closed.
 
-- `path(/^\/foo$/)` matches `/foo` only.
-- `path(/\/public|\/static/)` matches `/public` and `/static` as whole paths, not `/admin/static`.
+For timeout and request cancellation, recovery accepts only a terminal Web `Response`; `NextResponse.next()` cannot resume execution. Without recovery, timeout returns `500`. Cancellation stops the package chain and returns a native `NextResponse.next()` handoff; Next.js may continue downstream routing, so this is not a fail-closed response. Engine-level failures also cannot resume. Error diagnostics record the chosen recovery policy.
 
-Malformed percent-encoding (for example `%E0%A4%A`) makes the chain return `400 Bad Request` before any rule runs.
+## Chain options
 
-## `host`
+| Option                | Default             | Meaning                                                                                             |
+| --------------------- | ------------------- | --------------------------------------------------------------------------------------------------- |
+| `timeout`             | `0`                 | Per-handler deadline in milliseconds.                                                               |
+| `debug`               | `false`             | Disable logs, or select `true`, `"compact"`, `"detailed"`, or `"verbose"`.                          |
+| `logger`              | Console logger      | Logger with `debug`, `info`, `warn`, and `error` methods.                                           |
+| `onError`             | None                | Chain-level error recovery. Handler-level `onError` takes precedence.                               |
+| `onTrace`             | None                | Receives structured request traces.                                                                 |
+| `tracePath`           | `true`              | Include the original request pathname in the top-level structured trace and formatted request line. |
+| `headerMergeStrategy` | `"last-write-wins"` | Resolve response-header conflicts.                                                                  |
+| `cookieMergeStrategy` | `"last-write-wins"` | Resolve cookie conflicts.                                                                           |
+| `strictOverrideCheck` | `false`             | Throw at chain creation if native Next.js request-header override metadata cannot be verified.      |
 
-```ts
-host(matcher: string | RegExp | (string | RegExp)[]): RegExp
-```
+Handler `timeout` and `debug` override their chain-level values. Chain-level `onError` is used only when a handler does not define its own.
 
-Compiles host names for a host scope.
+`strictOverrideCheck` tests whether the active Next.js `NextResponse.next()` encodes a sentinel request-header override. The probe runs when the first chain is constructed and caches its result for that package module. A successful probe is silent and leaves normal native header replacement behavior unchanged.
 
-- `host('admin.example.com')`: exact match, case-insensitive. The port is ignored.
-- `host('*.example.com')`: one DNS label. `foo.example.com` matches. `example.com` and `a.b.example.com` do not.
-- `host(/shop\.localhost$/)`: a RegExp, matched against the whole host name. Only its source is used; its flags are ignored, and matching is case-insensitive.
-- An array matches if any entry matches.
+If the probe reports unsupported behavior or throws, `strictOverrideCheck: true` throws during chain construction. With the default `false`, an uncached failed probe warns and chain construction continues; later chains reuse the result without probing again. The package does not emulate the override mechanism. Request-header replacements may then be missing from later handlers or downstream Next.js code. Use `true` to fail fast when the application depends on native request-header forwarding.
 
-The host comes from the `host` header, or from `x-forwarded-host` when `host` is absent. The client controls this header. See [Security](security.md#host-matching).
+The probe checks Next.js's generated override metadata. It does not verify that the deployed runtime later applies that metadata.
 
-## Request context
+`tracePath: false` removes only the original request pathname from `ChainTrace.pathname` and the formatted request line. It does not remove paths in matched scope details or rewrite and redirect destinations. Destination query values are replaced with `?[query]`.
 
-```ts
-type RequestMetadata = {
-  readonly requestId: string;
-  readonly startedAt: number;
-  readonly elapsedMs: number;
-  readonly originalUrl: string;
-  readonly originalPathname: string;
-  readonly originalHostname: string;
-};
+## Public types
 
-type ApplicationContext<TContext extends object> = string extends keyof TContext
-  ? never
-  : Omit<Partial<TContext>, keyof RequestMetadata | "signal">;
+The package exports `ChainEntry`, `ChainOptions`, `HandlerConfig`, `NativeProxy`, `OnErrorHandler`, `OnErrorResult`, `HandlerContext`, `RequestMetadata`, matcher types, and structured diagnostic types.
 
-type HandlerContext<TContext extends object = object> = RequestMetadata &
-  ApplicationContext<TContext> & {
-    readonly signal: AbortSignal;
-  };
-```
-
-Every invocation creates one ID and metadata snapshot. Application properties are mutable, optional until set, and isolated per request. Use finite-key object types for application state; broad string index signatures make `HandlerContext<T>` resolve to `never`. The seven metadata properties and `signal` are immutable.
-
-## `RuleTimeoutError`
-
-```ts
-class RuleTimeoutError extends Error {
-  readonly ruleName: string;
-  readonly timeoutMs: number;
-}
-```
-
-Passed to `onError` when a handler exceeds its timeout. Check with `err instanceof RuleTimeoutError`.
-
-## Options
-
-| Option                | Type                                                    | Default             | Description                                                                                                                                             |
-| :-------------------- | :------------------------------------------------------ | :------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `headerMergeStrategy` | `'last-write-wins' \| 'first-write-wins' \| MergeFn`    | `'last-write-wins'` | Resolves response header conflicts between rules.                                                                                                       |
-| `cookieMergeStrategy` | `'last-write-wins' \| 'first-write-wins' \| MergeFn`    | `'last-write-wins'` | Resolves `Set-Cookie` conflicts with the same name, domain, and path.                                                                                   |
-| `timeout`             | `number`                                                | `0`                 | Time limit per handler, including its predicate. Zero disables it. Must be an integer from 0 through `2_147_483_647`.                                   |
-| `onError`             | `OnErrorHandler`                                        | none                | Recovers from ordinary errors. Timeout and request cancellation accept only a terminal `Response`.                                                      |
-| `requestHeaderPolicy` | `{ blocked?: string[]; allowed?: string[] }`            | `{}`                | Controls which request headers `next({ request })` may set.                                                                                             |
-| `debug`               | `false \| true \| 'compact' \| 'detailed' \| 'verbose'` | `false`             | Built-in request diagnostics. `true` means `'detailed'`.                                                                                                |
-| `onTrace`             | `(trace: ChainTrace) => void \| Promise<void>`          | none                | Receives one completed structured trace per request. The chain does not await it.                                                                       |
-| `tracePath`           | `boolean`                                               | `true`              | Set `false` to omit request pathnames from built-in output and traces.                                                                                  |
-| `logger`              | `ChainLogger`                                           | console             | Replaces the built-in output sink. Completed debug blocks use `info`; methods must provide `debug`, `info`, `warn`, `error`. Sink failures are ignored. |
-| `strictOverrideCheck` | `boolean`                                               | `false`             | Throws at startup when the runtime cannot apply request overrides.                                                                                      |
-
-`MergeFn` is `(key: string, existing: string, incoming: string) => string | null`. Returning `null` removes the header or cookie.
-
-### `requestHeaderPolicy`
-
-By default, these names cannot be set through `next({ request })`:
-
-`host`, `connection`, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `te`, `trailer`, `transfer-encoding`, `upgrade`, `content-length`, `cookie`, `authorization`, `x-forwarded-host`, `x-forwarded-for`, `x-forwarded-proto`, `x-real-ip`, and every name starting with `x-middleware-`. Other `x-forwarded-*` names, such as `x-forwarded-port`, are not on the list.
-
-- `blocked` adds names to this list.
-- `allowed` lets names through. It overrides the default list, including `x-middleware-*` names. Use it only for headers your own code controls.
-
-Blocked names are dropped silently. Set `debug: true` to see them in the logs.
-
-### Debug levels and traces
-
-| Level        | Output                                                                                           |
-| :----------- | :----------------------------------------------------------------------------------------------- |
-| `false`      | No built-in diagnostics. This is the default, including in development.                          |
-| `true`       | Same as `'detailed'`.                                                                            |
-| `'compact'`  | One concise summary line per request.                                                            |
-| `'detailed'` | Summary and executed, skipped, and not-reached handler outcomes.                                 |
-| `'verbose'`  | Detailed output plus skip reasons, declared match rules, `when` results, and effective timeouts. |
-
-`defineHandler({ debug })` overrides the chain level for that handler. Explicit `false` hides its built-in details, but never changes execution or the `onTrace` callback. A handler-level `true`, `'detailed'`, or `'verbose'` can enable built-in output when chain debugging is off. `'compact'` requests summary output.
-
-`onTrace` is independent of built-in debug filtering. Every trace includes `requestId`, `startedAt`, monotonic `durationMs`, optional pathname, final outcome, and ordered handler outcomes. It never receives request headers, cookies, bodies, context values, or raw error objects. Rejected promises and thrown errors from the callback are ignored.
-
-The built-in formatter uses `NO_COLOR` before `FORCE_COLOR`, then TTY detection. It uses plain text when output is non-interactive or terminal capabilities are uncertain. `tracePath: false` omits pathnames; destination query values are always redacted. Terminal controls and excessively long strings are sanitized.
-
-Handler durations include `when` evaluation but exclude recovery. Total duration includes recovery, response composition, and finalization. Timeout aborts the handler signal and stops waiting; user code must cooperate with the signal.
-
-### `onError`
-
-```ts
-type OnErrorHandler<TContext> = (
-  err: unknown,
-  ruleIndex: number,
-  req: NextRequest,
-  ctx: HandlerContext<TContext>,
-) => OnErrorResult | Promise<OnErrorResult>;
-```
-
-`ruleIndex` is the zero-based index of the rule that failed. `-1` means the error came from the engine itself rather than a rule's own code: after all rules ran, or while reading a rule's return value.
-
-| Returns                           | Effect                                                                                  |
-| :-------------------------------- | :-------------------------------------------------------------------------------------- |
-| `Response`                        | Stops the chain with that response. Earlier headers and cookies are merged into it.     |
-| `next()` or `NextResponse.next()` | Continues to the next rule. Not allowed for `-1`, where no rule is left: returns `500`. |
-| `undefined`, `void`, or `null`    | `500 Internal Server Error`.                                                            |
-
-Throwing inside `onError` also gives a 500.
-
-## `ChainLogger`
-
-```ts
-interface ChainLogger {
-  debug(metaOrMsg: unknown, maybeMsg?: string): void;
-  info(metaOrMsg: unknown, maybeMsg?: string): void;
-  warn(metaOrMsg: unknown, maybeMsg?: string): void;
-  error(metaOrMsg: unknown, maybeMsg?: string): void;
-}
-```
-
-Any logger with these four methods works, including pino and winston.
-
-## Types
-
-| Type                                         | Meaning                                                       |
-| :------------------------------------------- | :------------------------------------------------------------ |
-| `ChainOptions<TContext>`                     | Options accepted by `chain()`.                                |
-| `ChainEntry<TContext>`                       | A native handler, defined handler, or scoped tuple.           |
-| `DefinedHandler<TContext>`                   | The return type of `defineHandler()`.                         |
-| `HandlerContext<TContext>`                   | Read-only request metadata and signal with mutable app state. |
-| `RequestMetadata`                            | Immutable request identity and original request snapshot.     |
-| `PathMatcher`                                | `string \| RegExp`.                                           |
-| `HostMatcher`                                | `string \| RegExp \| (string \| RegExp)[]`.                   |
-| `NextOptions`                                | The argument to `next()`.                                     |
-| `NextResult`                                 | The return type of `next()`.                                  |
-| `MergeStrategy`                              | `'last-write-wins' \| 'first-write-wins' \| MergeFn`.         |
-| `RequestHeaderPolicy`                        | `{ blocked?, allowed? }`.                                     |
-| `OnErrorHandler`, `OnErrorResult`            | Types for `onError`.                                          |
-| `ChainLogger`                                | The logger interface.                                         |
-| `DebugLevel`                                 | `false \| true \| 'compact' \| 'detailed' \| 'verbose'`.      |
-| `ChainTrace`, `ChainOutcome`, `HandlerTrace` | Sanitized structured request diagnostics.                     |
+It exports no helper-specific continuation token, response wrapper, or request-header policy.

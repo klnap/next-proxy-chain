@@ -1,7 +1,8 @@
+import { nextWithResponseHeaders } from "../helpers/native-response";
 import { describe, expect, it } from "bun:test";
 import type { NextFetchEvent } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
-import { chain as composeChain, defineHandler, next } from "../../src/index";
+import { chain as composeChain, defineHandler } from "../../src/index";
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} };
 const req = (url: string) => new NextRequest(url);
@@ -29,22 +30,43 @@ describe("chain() with native Next.js handlers", () => {
     expect(res.headers.get("x-middleware-next")).toBe("1");
   });
 
+  it("accepts configured object method syntax without a receiver contract", async () => {
+    const configured = defineHandler({
+      name: "method",
+      handle(request) {
+        return new Response(request.nextUrl.pathname);
+      },
+    });
+    const response = await composeChain([configured])(
+      new NextRequest("https://example.com/method"),
+      {} as never,
+    );
+
+    expect(await response.text()).toBe("/method");
+  });
+
   it("runs a scoped native handler only for matching paths", async () => {
     const auth = (_req: NextRequest) => new Response("denied", { status: 403 });
-    const handler = composeChain([[auth, "/dashboard/**"]], { logger: silent });
+    const handler = composeChain(
+      [{ name: "auth", handle: auth, rules: { include: "/dashboard/**" } }],
+      { logger: silent },
+    );
     expect((await handler(req("http://localhost/dashboard/home"), {} as never)).status).toBe(403);
     expect((await handler(req("http://localhost/about"), {} as never)).status).toBe(200);
   });
 
   it("accepts an exclude object and a RegExp exclude, Nimpl-style", async () => {
     const auth = () => new Response("denied", { status: 403 });
-    const handler = composeChain([[auth, { exclude: /^\/private(\/.*)?$/ }]], { logger: silent });
+    const handler = composeChain(
+      [{ name: "auth", handle: auth, rules: { exclude: /^\/private(\/.*)?$/ } }],
+      { logger: silent },
+    );
     expect((await handler(req("http://localhost/private/x"), {} as never)).status).toBe(200);
     expect((await handler(req("http://localhost/public"), {} as never)).status).toBe(403);
   });
 
   it("stops at a native redirect and keeps earlier headers", async () => {
-    const header = (_req: NextRequest) => next({ headers: { "x-frame-options": "DENY" } });
+    const header = (_req: NextRequest) => nextWithResponseHeaders({ "x-frame-options": "DENY" });
     const redirect = (req: NextRequest) => NextResponse.redirect(new URL("/login", req.url));
     const after = () => new Response("unreachable", { status: 200 });
     const handler = composeChain([header, redirect, after], { logger: silent });
@@ -73,14 +95,14 @@ describe("chain() with native Next.js handlers", () => {
     type Ctx = { user?: string };
     const setUser = defineHandler<Ctx>({
       name: "set-user",
-      handler: (r, _event, ctx) => {
+      handle: (r, _event, ctx) => {
         ctx.user = r.headers.get("x-user") ?? "anonymous";
-        return next();
+        return NextResponse.next();
       },
     });
     const reportUser = defineHandler<Ctx>({
       name: "report-user",
-      handler: (_r, _event, ctx) => next({ headers: { "x-seen-user": ctx.user ?? "none" } }),
+      handle: (_r, _event, ctx) => nextWithResponseHeaders({ "x-seen-user": ctx.user ?? "none" }),
     });
     const handler = composeChain<Ctx>([setUser, reportUser], { logger: silent });
     const a = await handler(
@@ -92,23 +114,57 @@ describe("chain() with native Next.js handlers", () => {
     expect(b.headers.get("x-seen-user")).toBe("anonymous");
   });
 
-  it("scopes a defineHandler rule with the tuple form", async () => {
-    const deny = defineHandler({
+  it("scopes inline and reusable handler configurations identically", async () => {
+    const config = {
       name: "deny",
-      handler: () => new Response("denied", { status: 403 }),
-    });
-    const handler = composeChain([[deny, "/admin/**"]], { logger: silent });
-    expect((await handler(req("http://localhost/admin/x"), {} as never)).status).toBe(403);
-    expect((await handler(req("http://localhost/home"), {} as never)).status).toBe(200);
+      rules: { include: "/admin/**" },
+      handle: () => new Response("denied", { status: 403 }),
+    };
+    const inline = composeChain([config], { logger: silent });
+    const reusableConfig = defineHandler(config);
+    expect(reusableConfig).toBe(config);
+    const reusable = composeChain([reusableConfig], { logger: silent });
+    for (const handler of [inline, reusable]) {
+      expect((await handler(req("http://localhost/admin/x"), {} as never)).status).toBe(403);
+      expect((await handler(req("http://localhost/home"), {} as never)).status).toBe(200);
+    }
+  });
+
+  it("rejects tuple and malformed configured entries with clear errors", () => {
+    const auth = () => undefined;
+    expect(() => composeChain([[auth, "/admin/**"]] as never)).toThrow(
+      /tuple entries are not supported/,
+    );
+    expect(() => composeChain([{ name: "missing-handler" }] as never)).toThrow(
+      /configured handlers require a non-empty name and handle/,
+    );
+    expect(() => composeChain([{ handle: auth }] as never)).toThrow(
+      /configured handlers require a non-empty name and handle/,
+    );
+    expect(() => composeChain([{ name: "legacy", handler: auth } as never])).toThrow(
+      /configured handlers require a non-empty name and handle/,
+    );
+    expect(() => composeChain([{ name: "both", handle: auth, handler: auth } as never])).toThrow(
+      /configured handler property 'handler' is unsupported/,
+    );
+    expect(() =>
+      composeChain([{ name: "nested", handle: auth, config: { timeout: 1 } }] as never),
+    ).toThrow(/handler configuration must use top-level options/);
+    expect(() => defineHandler({ handle: auth } as never)).toThrow(
+      /configured handlers require a non-empty name and handle/,
+    );
+    expect(() => defineHandler({ name: " ", handle: auth } as never)).toThrow(
+      /configured handlers require a non-empty name and handle/,
+    );
   });
 
   it("passes the request context to a native handler as the third argument", async () => {
     type Ctx = { user?: string };
     const tag = defineHandler<Ctx>({
       name: "tag",
-      handler: (_r, _event, ctx) => {
+      handle: (_r, _event, ctx) => {
         ctx.user = "ada";
-        return next();
+        return NextResponse.next();
       },
     });
     const native = (
@@ -117,7 +173,7 @@ describe("chain() with native Next.js handlers", () => {
       ctx: { requestId: string; user?: string },
     ) => {
       event.waitUntil(Promise.resolve());
-      return next({ headers: { "x-request-id": ctx.requestId, "x-user": ctx.user ?? "" } });
+      return nextWithResponseHeaders({ "x-request-id": ctx.requestId, "x-user": ctx.user ?? "" });
     };
     const handler = composeChain<Ctx>([tag, native], { logger: silent });
     const res = await handler(new NextRequest("http://localhost/x"), { waitUntil() {} } as never);
@@ -128,7 +184,7 @@ describe("chain() with native Next.js handlers", () => {
   it("generates a request id independent of incoming headers", async () => {
     const rule = defineHandler({
       name: "rule",
-      handler: (_r, _event, ctx) => next({ headers: { "x-seen-id": ctx.requestId } }),
+      handle: (_r, _event, ctx) => nextWithResponseHeaders({ "x-seen-id": ctx.requestId }),
     });
     const handler = composeChain([rule], { logger: silent });
     const withId = await handler(

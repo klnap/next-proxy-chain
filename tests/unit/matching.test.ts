@@ -9,7 +9,6 @@ import {
   ruleMatches,
   toRule,
   toStatelessRegExp,
-  withPaths,
 } from "../../src/core/matching";
 
 describe("Scope Matching & Host Normalization", () => {
@@ -54,16 +53,6 @@ describe("Scope Matching & Host Normalization", () => {
     expect(() => assertIncludeExcludeNoOverlap(scope, scope, "authRule")).toThrow(
       /identical scope/,
     );
-  });
-
-  it("scopes a rule cleanly using withPaths wrapper", () => {
-    const scoped = withPaths(() => undefined, {
-      include: path("/api/*"),
-      name: "apiRule",
-    });
-    expect(scoped.name).toBe("apiRule");
-    expect(ruleMatches("/api/users", null, scoped)).toBe(true);
-    expect(ruleMatches("/web", null, scoped)).toBe(false);
   });
 
   it("matches exact host strings and arrays of host patterns", () => {

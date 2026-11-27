@@ -65,9 +65,18 @@ jobs:
           import { execFileSync } from "node:child_process";
           const tarball = process.argv[2];
           const files = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" }).trim().split("\n");
-          const allowed = new Set(["package/package.json", "package/README.md", "package/CHANGELOG.md", "package/LICENSE", "package/dist/index.cjs", "package/dist/index.d.cts", "package/dist/index.d.ts", "package/dist/index.js"]);
+          const allowed = new Set([
+            "package/package.json", "package/README.md", "package/CHANGELOG.md", "package/LICENSE",
+            "package/llms.txt", "package/docs/api.md", "package/docs/concepts.md", "package/docs/guides.md",
+            "package/docs/security.md",
+            "package/dist/index.cjs", "package/dist/index.d.cts", "package/dist/index.d.ts", "package/dist/index.js",
+          ]);
           if (files.some((file) => !allowed.has(file))) throw new Error(`Unexpected tarball file: ${files.find((file) => !allowed.has(file))}`);
-          for (const file of ["package/dist/index.cjs", "package/dist/index.d.cts", "package/dist/index.d.ts", "package/dist/index.js"]) {
+          for (const file of [
+            "package/dist/index.cjs", "package/dist/index.d.cts", "package/dist/index.d.ts", "package/dist/index.js",
+            "package/llms.txt", "package/docs/api.md", "package/docs/concepts.md", "package/docs/guides.md",
+            "package/docs/security.md",
+          ]) {
             if (!files.includes(file)) throw new Error(`Missing tarball file: ${file}`);
           }
           const manifest = JSON.parse(execFileSync("tar", ["-xOf", tarball, "package/package.json"], { encoding: "utf8" }));

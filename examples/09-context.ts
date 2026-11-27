@@ -1,13 +1,16 @@
-import { chain as composeChain, defineHandler, next } from "@klnap/next-proxy-chain";
+import { NextResponse } from "next/server";
+import { chain as composeChain, defineHandler } from "@klnap/next-proxy-chain";
 
 type Ctx = { user?: string };
 
 // 3. A rule that reads the context.
 const readSession = defineHandler<Ctx>({
   name: "read-session",
-  handler: (req, _event, ctx) => {
-    ctx.user = req.cookies.get("user")?.value;
-    return next({ headers: { "x-request-id": ctx.requestId } });
+  handle: (request, _event, context) => {
+    context.user = request.cookies.get("user")?.value;
+    const response = NextResponse.next();
+    response.headers.set("x-request-id", context.requestId);
+    return response;
   },
 });
 

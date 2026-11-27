@@ -1,6 +1,6 @@
 import type { NextFetchEvent, NextRequest } from "next/server";
 import type { HandlerContext } from "../context";
-import type { NextResult, OnErrorHandler } from "../types";
+import type { OnErrorHandler } from "../types";
 
 export type DebugLevel = false | true | "compact" | "detailed" | "verbose";
 export type NormalizedDebugLevel = false | "compact" | "detailed" | "verbose";
@@ -21,7 +21,7 @@ type NamedHandler = { name: string; details?: HandlerDiagnosticDetails };
 export type HandlerTrace =
   | (NamedHandler & {
       outcome: "continue";
-      source: "undefined" | "NextResponse.next()" | "next()";
+      source: "undefined" | "NextResponse.next()";
       durationMs: number;
     })
   | (NamedHandler & {
@@ -96,20 +96,3 @@ export type HandlerWhen<TContext extends object = object> = (
   event: NextFetchEvent,
   context: HandlerContext<TContext>,
 ) => boolean | Promise<boolean>;
-
-export type HandlerDebugOptions<TContext extends object = object> = {
-  name?: string;
-  debug?: DebugLevel;
-  timeout?: number;
-  onError?: OnErrorHandler<TContext>;
-  rules?: {
-    include?: import("../types").RouteScopeList;
-    exclude?: import("../types").RouteScopeList;
-    when?: HandlerWhen<TContext>;
-  };
-  handler: (
-    request: NextRequest,
-    event: NextFetchEvent,
-    context: HandlerContext<TContext>,
-  ) => Response | NextResult | undefined | void | Promise<Response | NextResult | undefined | void>;
-};

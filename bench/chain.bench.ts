@@ -66,7 +66,8 @@ const defined = (readContext: boolean) =>
   chain(
     [
       defineHandler({
-        handler: (_request, _event, context) => {
+        name: "context",
+        handle: (_request, _event, context) => {
           if (readContext) {
             void context.requestId;
             void context.signal;
@@ -78,15 +79,15 @@ const defined = (readContext: boolean) =>
   );
 const noContextRead = defined(false);
 const withContextRead = defined(true);
-const withTimeout = chain([defineHandler({ handler: () => undefined })], {
+const withTimeout = chain([defineHandler({ name: "timeout", handle: () => undefined })], {
   logger: silent,
   timeout: 1000,
 });
 const threeSequential = chain(
   [
-    defineHandler({ handler: () => undefined }),
-    defineHandler({ handler: () => undefined }),
-    defineHandler({ handler: () => undefined }),
+    defineHandler({ name: "one", handle: () => undefined }),
+    defineHandler({ name: "two", handle: () => undefined }),
+    defineHandler({ name: "three", handle: () => undefined }),
   ],
   { logger: silent },
 );
@@ -123,7 +124,7 @@ await timeConcurrent("defined (32 concurrent)", () => noContextRead(req(), event
 
 const init = performance.now();
 for (let i = 0; i < 1000; i++)
-  chain([defineHandler({ handler: () => undefined })], { logger: silent });
+  chain([defineHandler({ name: "init", handle: () => undefined })], { logger: silent });
 console.log(
   `${"chain() init".padEnd(28)} ${(((performance.now() - init) * 1000) / 1000).toFixed(2)} µs/call`,
 );

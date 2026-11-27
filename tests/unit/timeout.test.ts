@@ -1,8 +1,9 @@
+import { NextResponse } from "next/server";
 import { describe, expect, it } from "bun:test";
 import type { NextFetchEvent } from "next/server";
 import { NextRequest } from "next/server";
 import { assertValidTimeout, RuleTimeoutError, runInExecutionScope } from "../../src/core/timeout";
-import { chain as composeChain, defineHandler, next } from "../../src/index";
+import { chain as composeChain, defineHandler } from "../../src/index";
 
 describe("Timeout Enforcement", () => {
   it("resolves quickly when execution is within budget", async () => {
@@ -79,13 +80,15 @@ describe("Timeout through chain", () => {
   it("throws RangeError synchronously when timeout is invalid", () => {
     expect(() => composeChain([], { timeout: Number.NaN })).toThrow(RangeError);
     expect(() => composeChain([], { timeout: -1 })).toThrow(RangeError);
-    expect(() => defineHandler({ timeout: 1.5, handler: () => undefined })).toThrow(RangeError);
+    expect(() =>
+      defineHandler({ name: "invalid-timeout", timeout: 1.5, handle: () => undefined }),
+    ).toThrow(RangeError);
   });
 
   it("returns 500 when a rule exceeds timeout", async () => {
     const slow = defineHandler({
       name: "slow",
-      handler: async () => {
+      handle: async () => {
         await new Promise((resolve) => setTimeout(resolve, 80));
         return undefined;
       },
@@ -108,7 +111,7 @@ describe("Timeout through chain", () => {
           return true;
         },
       },
-      handler: () => {
+      handle: () => {
         handlerRan = true;
       },
     });
@@ -129,7 +132,7 @@ describe("Timeout through chain", () => {
             resolvePredicate = resolve;
           }),
       },
-      handler: () => {
+      handle: () => {
         handlerRan = true;
       },
     });
@@ -144,7 +147,7 @@ describe("Timeout through chain", () => {
   it("does not surface an unhandled rejection after timeout", async () => {
     const late = defineHandler({
       name: "late",
-      handler: async () => {
+      handle: async () => {
         await new Promise((resolve) => setTimeout(resolve, 60));
         throw new Error("late rejection");
       },
@@ -165,7 +168,7 @@ describe("Timeout through chain", () => {
     const timeoutResponse = defineHandler({
       name: "timeout-response",
       timeout: 2,
-      handler: () => new Promise<Response>(() => {}),
+      handle: () => new Promise<Response>(() => {}),
     });
     const recovered = composeChain([timeoutResponse], {
       logger: silentLogger,
@@ -184,12 +187,13 @@ describe("Timeout through chain", () => {
     expect(trace?.handlers[0]).toMatchObject({ outcome: "timeout", recovery: "response" });
 
     const timeoutContinuation = defineHandler({
+      name: "timeout-continuation",
       timeout: 2,
-      handler: () => new Promise<Response>(() => {}),
+      handle: () => new Promise<Response>(() => {}),
     });
     const rejectedContinuation = composeChain([timeoutContinuation], {
       logger: silentLogger,
-      onError: () => next(),
+      onError: () => NextResponse.next(),
     });
     expect(
       (await rejectedContinuation(new NextRequest("http://localhost/"), fakeEvent)).status,
@@ -205,14 +209,16 @@ describe("Timeout through chain", () => {
       markEntered = resolve;
     });
     const blocking = defineHandler({
-      handler: async (_request, _event, context) => {
+      name: "blocking",
+      handle: async (_request, _event, context) => {
         signal = context.signal;
         markEntered();
         await new Promise((resolve) => setTimeout(resolve, 50));
       },
     });
     const later = defineHandler({
-      handler: () => {
+      name: "later",
+      handle: () => {
         laterRan = true;
       },
     });
@@ -239,7 +245,8 @@ describe("Timeout through chain", () => {
         }
       | undefined;
     const handler = defineHandler({
-      handler: () => {
+      name: "already-cancelled",
+      handle: () => {
         handlerRan = true;
       },
     });
@@ -271,7 +278,8 @@ describe("Timeout through chain", () => {
 
   it("treats ordinary AbortError exceptions as handler failures, not request cancellation", async () => {
     const handler = defineHandler({
-      handler: () => {
+      name: "abort-error",
+      handle: () => {
         throw new DOMException("operation aborted", "AbortError");
       },
     });

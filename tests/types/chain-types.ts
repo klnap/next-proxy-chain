@@ -1,6 +1,7 @@
 import type { NextFetchEvent, NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { chain as composeChain, defineHandler, next, path } from "../../src/index";
+import * as api from "../../src/index";
+import { chain as composeChain, defineHandler } from "../../src/index";
 
 // Positive: a native handler needs no annotations; req and event are inferred.
 export const native = composeChain([
@@ -12,24 +13,100 @@ export const native = composeChain([
   async () => undefined,
 ]);
 
-// Positive: string, array, object and RegExp scopes all type-check in tuples.
+// Positive: string, array, object and RegExp scopes type-check in configured handlers.
 export const scoped = composeChain([
-  [(_req: NextRequest) => undefined, "/admin/**"],
-  [(_req: NextRequest) => undefined, ["/a/**", "/b/**"]],
-  [(_req: NextRequest) => undefined, { exclude: /^\/private(\/.*)?$/ }],
-  [(_req: NextRequest) => undefined, { include: path("/x/*"), exclude: "/x/login" }],
+  { name: "admin", handle: (_req: NextRequest) => undefined, rules: { include: "/admin/**" } },
+  {
+    name: "area",
+    handle: (_req: NextRequest) => undefined,
+    rules: { include: ["/a/**", "/b/**"] },
+  },
+  {
+    name: "private",
+    handle: (_req: NextRequest) => undefined,
+    rules: { exclude: /^\/private(\/.*)?$/ },
+  },
+  {
+    name: "x",
+    handle: (_req: NextRequest) => undefined,
+    rules: { include: "/x/*", exclude: "/x/login" },
+  },
 ]);
 
 // Positive: a typed context rule has optional application state.
 type Ctx = { user: string };
 const withUser = defineHandler<Ctx>({
   name: "user",
-  handler: (_req, _event, ctx) => {
+  handle: (_req, _event, ctx) => {
     const name: string | undefined = ctx.user;
-    return next({ headers: { "x-user": name ?? "" } });
+    return NextResponse.next({ headers: { "x-user": name ?? "" } });
   },
 });
 export const typed = composeChain<Ctx>([withUser]);
+
+// Positive: inline and reusable configurations share the same required fields and options.
+export const inline = composeChain<Ctx>([
+  {
+    name: "inline",
+    handle: (_req, _event, ctx) => NextResponse.next(),
+    rules: { include: "/dashboard/**" },
+    timeout: 10,
+    debug: false,
+    onError: () => NextResponse.next(),
+  },
+]);
+
+// Positive: reusable configurations infer callback arguments, and function and method syntax work.
+const authenticate = async (_request: NextRequest) => new Response("ok");
+export const reusable = defineHandler({
+  name: "reusable",
+  rules: { include: "/dashboard/**" },
+  timeout: 500,
+  debug: true,
+  onError: () => NextResponse.next(),
+  handle: authenticate,
+});
+export const methodSyntax = defineHandler({
+  name: "method",
+  handle(request, _event, context) {
+    const pathname: string = request.nextUrl.pathname;
+    const requestId: string = context.requestId;
+    return pathname ? NextResponse.next() : new Response(requestId);
+  },
+});
+export const inferredAsync = defineHandler({
+  name: "async",
+  handle: async (request) => new Response(request.nextUrl.pathname),
+});
+
+// Negative: configured handlers require a name and handle.
+// @ts-expect-error configured handler needs a name
+composeChain([{ handle: () => undefined }]);
+// @ts-expect-error configured handler needs a handle
+composeChain([{ name: "missing-handle" }]);
+// @ts-expect-error nested handler configuration is not supported
+composeChain([{ name: "nested", handle: () => undefined, config: { timeout: 10 } }]);
+// @ts-expect-error the old configured property is removed
+composeChain([{ name: "old-property", handler: () => undefined }]);
+// @ts-expect-error invalid callback return type
+composeChain([{ name: "bad-return", handle: () => "continue" }]);
+// @ts-expect-error the custom next() export is removed
+api.next();
+// @ts-expect-error helper-specific result types are removed
+type RemovedNextResult = api.NextResult;
+const incompatibleContext = defineHandler<{ user: string }>({
+  name: "user",
+  handle: (_request, _event, context) => {
+    context.user = "ada";
+  },
+});
+// @ts-expect-error configured handler context must match the chain context
+composeChain<{ admin: boolean }>([incompatibleContext]);
+// @ts-expect-error function-valued handle remains contravariant in its custom context
+const incompatibleHandlerConfig: api.HandlerConfig<{ admin: boolean }> = incompatibleContext;
+void incompatibleHandlerConfig;
+// @ts-expect-error tuple entries are removed
+composeChain([[(_req: NextRequest) => undefined, "/admin/**"]]);
 
 // Negative: unknown option.
 // @ts-expect-error unknown option
@@ -39,7 +116,7 @@ export const badOption = composeChain([(_req: NextRequest) => undefined], { notA
 // @ts-expect-error scope must be a path matcher or an object
 export const badScope = composeChain([[(_req: NextRequest) => undefined, 42]]);
 
-// Negative: a handler must return a Response, next(), or undefined.
+// Negative: a handler must return a Response, NextResponse.next(), or undefined.
 // @ts-expect-error string is not a valid proxy result
 export const badReturn = composeChain([(_req: NextRequest, _event: NextFetchEvent) => "continue"]);
 
@@ -47,14 +124,18 @@ export const badReturn = composeChain([(_req: NextRequest, _event: NextFetchEven
 export const nativeWithContext = composeChain<Ctx>([
   (_req, _event, ctx) => {
     const user: string | undefined = ctx.user;
-    return next({ headers: { "x-user": user ?? "" } });
+    return NextResponse.next({ headers: { "x-user": user ?? "" } });
   },
 ]);
 
 void nativeWithContext;
+void reusable;
+void methodSyntax;
+void inferredAsync;
 void native;
 void scoped;
 void typed;
+void inline;
 void badOption;
 void badScope;
 void badReturn;

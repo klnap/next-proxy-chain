@@ -1,0 +1,17 @@
+# @klnap/next-proxy-chain
+
+> Composable proxy and middleware for Next.js.
+
+Handler callbacks are positional: use `request`, `event`, and `context` for used parameters; prefix intentionally unused parameters with `_` when later arguments need their positions, and omit unused trailing parameters.
+
+The only runtime exports are `chain()` and `defineHandler()`. Configured handlers use `handle`, not `handler`. `undefined` and `NextResponse.next()` continue; successful `NextResponse.rewrite()` stages a rewrite and continues; redirects and terminal `Response` values stop the chain. Use native Next.js and Web response APIs.
+
+## Documentation
+
+- [README](README.md): purpose, quick start, canonical usage, compatibility, and documentation discovery.
+- [Concepts](docs/concepts.md): execution order, matching, rewrites, HTTP effects, context, and timeouts.
+- [Guides](docs/guides.md): native matchers, practical handler recipes, request IDs, cancellation, and diagnostics.
+- [API reference](docs/api.md): exports, handler configuration, matching syntax, options, types, and defaults.
+- [Security](docs/security.md): trust boundaries, native request-header replacement, authorization, rewrites, and diagnostics privacy.
+
+Read the installed README and relevant supporting pages before integrating. The public declarations are in `dist/index.d.ts` and `dist/index.d.cts`.

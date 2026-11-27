@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { formatTrace, shouldUseColor, supportsUnicode } from "../../src/core/diagnostics/formatter";
 import { safeDestination, safeDiagnosticText } from "../../src/core/diagnostics/sanitize";
 import type { ChainTrace } from "../../src/core/diagnostics/types";
-import { chain as composeChain, defineHandler, next } from "../../src/index";
+import { chain as composeChain, defineHandler } from "../../src/index";
 
 describe("diagnostic formatting", () => {
   it("formats compact traces as one readable line", () => {
@@ -156,11 +156,11 @@ describe("chain structured diagnostics", () => {
     const redirect = () => NextResponse.redirect("https://example.com/login?token=secret");
     const proxy = composeChain(
       [
-        () => next(),
+        () => NextResponse.next(),
         defineHandler({
           name: "auth",
           rules: { include: "/private/**" },
-          handler: () => NextResponse.next(),
+          handle: () => NextResponse.next(),
         }),
         redirect,
         () => new Response("unreachable"),
@@ -189,7 +189,7 @@ describe("chain structured diagnostics", () => {
     ]);
     expect(trace?.handlers[0]).toMatchObject({
       outcome: "continue",
-      source: "next()",
+      source: "NextResponse.next()",
     });
   });
 
@@ -215,7 +215,7 @@ describe("chain structured diagnostics", () => {
         defineHandler({
           name: "local-debug",
           debug: "verbose",
-          handler: () => NextResponse.next(),
+          handle: () => NextResponse.next(),
         }),
       ],
       {
@@ -244,7 +244,7 @@ describe("chain structured diagnostics", () => {
         defineHandler({
           name: "hidden",
           debug: false,
-          handler: () => undefined,
+          handle: () => undefined,
         }),
         () => NextResponse.next(),
       ],
@@ -292,13 +292,13 @@ describe("chain structured diagnostics", () => {
         defineHandler({
           name: "hidden",
           debug: false,
-          handler: () => NextResponse.next(),
+          handle: () => NextResponse.next(),
         }),
         defineHandler({
           name: "conditional",
           debug: false,
           rules: { when: () => false },
-          handler: () => NextResponse.next(),
+          handle: () => NextResponse.next(),
         }),
       ],
       {
@@ -354,7 +354,7 @@ describe("chain structured diagnostics", () => {
       [
         defineHandler({
           name: "analytics",
-          handler: () => {
+          handle: () => {
             throw new Error("must not leak");
           },
         }),
@@ -387,7 +387,7 @@ describe("chain structured diagnostics", () => {
       [
         defineHandler({
           name: "analytics",
-          handler: () => {
+          handle: () => {
             throw new Error("private error");
           },
           onError: () => NextResponse.next(),
@@ -454,7 +454,7 @@ describe("chain structured diagnostics", () => {
         defineHandler({
           name: "session",
           timeout: 2,
-          handler: (_request, _event, context) => {
+          handle: (_request, _event, context) => {
             signal = context.signal;
             return new Promise<Response>(() => {});
           },

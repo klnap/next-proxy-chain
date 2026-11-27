@@ -2,311 +2,378 @@
 
 Composable proxy and middleware for Next.js.
 
+Compose security, authentication, redirects, and localization in Next.js's single Proxy or Middleware entrypoint.
+
 ```ts
 import { chain } from "@klnap/next-proxy-chain";
 
-export default chain([intlProxy, [authProxy, "/dashboard/**"], securityProxy]);
+export default chain([security, authentication, redirects, localization]);
 ```
 
-`intlProxy`, `authProxy` and `securityProxy` are ordinary Next.js proxy functions: `(request, event) => NextResponse | Response | undefined`. You do not wrap them, and you do not change what they return.
+## Why?
 
-## Install
+Next.js discovers one Proxy entrypoint. As request logic grows, teams often split authentication, localization, redirects, security headers, and analytics into separate modules.
 
-```sh
-npm install @klnap/next-proxy-chain
-# or
+Separate files improve organization. The harder part is agreeing what happens when each handler can continue, rewrite, redirect, or return a response—and which request headers, response headers, and cookies reach the final result.
+
+This package composes handlers in order. Handlers keep native `NextRequest`, `NextResponse`, `NextFetchEvent`, and Web `Response` APIs.
+
+## Features
+
+- **Native-first composition:** use existing `(request, event)` handlers without wrappers; `event.waitUntil()` keeps the original event.
+- **Ordered execution:** run handlers sequentially; redirects and terminal responses stop later handlers.
+- **Conditional handlers:** match path, host, and asynchronous `when` predicates; keep Next.js `config.matcher` as the outer filter.
+- **Shared request context:** read generated request metadata and share typed, per-request application state.
+- **HTTP composition:** carry native request overrides, response headers, and cookies; continue staged rewrites until a later handler stops.
+- **Execution control:** set per-handler deadlines, pass cooperative `AbortSignal`s, and recover from ordinary errors.
+- **Diagnostics:** inspect formatted request traces or receive structured traces without a logging dependency.
+- **Zero runtime dependencies:** `next` is a peer dependency.
+
+## Installation
+
+**Bun**
+
+```bash
 bun add @klnap/next-proxy-chain
 ```
 
-`next` is a peer dependency (`>=15.0.0`). The package has no runtime dependencies.
+**npm**
 
-## Basic composition
+```bash
+npm install @klnap/next-proxy-chain
+```
 
-Pass handlers in the order they should run. Each one receives the native `(request, event)` arguments, so `event.waitUntil()` works.
+## Usage
+
+### Getting started
+
+```ts
+import { chain } from "@klnap/next-proxy-chain";
+import { NextResponse, type NextRequest } from "next/server";
+
+function securityHeaders() {
+  const response = NextResponse.next();
+  response.headers.set("x-content-type-options", "nosniff");
+  return response;
+}
+
+function redirectRoot(request: NextRequest) {
+  if (request.nextUrl.pathname === "/") {
+    return NextResponse.redirect(new URL("/home", request.url));
+  }
+}
+
+export default chain([securityHeaders, redirectRoot]);
+
+export const config = {
+  matcher: ["/:path*"],
+};
+```
+
+Save this as `proxy.ts` in Next.js 16 or `middleware.ts` in Next.js 15. The matcher is intentionally broad. Narrow it to routes that need the entrypoint. Next.js reads `config.matcher` statically, so keep it a literal in the file.
+
+`securityHeaders` adds a response header. `redirectRoot` can stop the chain with a redirect. The chain keeps the earlier header on that redirect.
+
+| Handler returns                        | Chain behavior                     |
+| -------------------------------------- | ---------------------------------- |
+| `undefined`                            | Continue to the next handler.      |
+| `NextResponse.next()`                  | Compose HTTP effects and continue. |
+| Successful `NextResponse.rewrite(url)` | Stage the rewrite and continue.    |
+| `NextResponse.redirect(url)`           | Stop and redirect.                 |
+| Terminal `Response`                    | Stop and return the response.      |
+
+Both internal and external successful rewrites are staged while the chain continues. Later path scopes and predicates see the rewritten pathname and query. A rewrite does not change the host used for matching; scopes use the effective `host` or `x-forwarded-host` request header. A prior native header replacement of either value changes later host matching. Original request metadata stays unchanged. A later redirect or terminal response replaces the staged rewrite. Only `NextResponse` routing responses are interpreted; a plain `Response` stays terminal.
+
+### Conditional handlers
+
+Configured handlers require a non-empty `name` and a `handle` function. `include` runs a handler when any included scope matches. Any matching `exclude` scope takes precedence. Scope alternatives use OR; `host` and `path` within one scope use AND. `when` runs after scope matching and may return a boolean or a promise.
+
+```ts
+import { chain } from "@klnap/next-proxy-chain";
+import { NextResponse } from "next/server";
+import { security, localization } from "@/lib/proxy/handlers";
+
+export default chain([
+  security,
+  {
+    name: "preview",
+    rules: {
+      include: "/docs/**",
+      when: (request) => request.nextUrl.searchParams.has("preview"),
+    },
+    handle: () => {
+      const response = NextResponse.next();
+      response.headers.set("cache-control", "no-store");
+      return response;
+    },
+  },
+  localization,
+]);
+```
+
+Path patterns support `*` for one segment and `**` for zero or more segments. `/docs/**` includes `/docs`. `config.matcher` decides whether Next.js invokes the entrypoint; handler rules only filter configured handlers after invocation.
+
+For example, this application-owned handler matches either billing path on the billing host, except the health route:
+
+```ts
+{
+  name: "billing",
+  rules: {
+    include: {
+      host: "billing.example.com",
+      path: ["/billing/**", "/invoices/**"],
+    },
+    exclude: "/billing/health",
+  },
+  handle: billing,
+}
+```
+
+Matching controls routing, not authorization. Verify permissions in application-owned code, including at the data-access boundary.
+
+### Reusable handlers
+
+`defineHandler()` accepts the same configuration as an inline entry. Moving the object into `defineHandler()` does not change its options or implementation.
+
+```ts
+import { defineHandler } from "@klnap/next-proxy-chain";
+import { NextResponse } from "next/server";
+
+export const preview = defineHandler({
+  name: "preview",
+  rules: {
+    include: "/docs/**",
+    when: (request) => request.nextUrl.searchParams.has("preview"),
+  },
+  handle: () => {
+    const response = NextResponse.next();
+    response.headers.set("cache-control", "no-store");
+    return response;
+  },
+});
+```
+
+Compose it like any other handler:
+
+```ts
+import { chain } from "@klnap/next-proxy-chain";
+import { security, localization } from "@/lib/proxy/handlers";
+import { preview } from "@/lib/proxy/preview";
+
+export default chain([security, preview, localization]);
+```
+
+Inline and reusable configurations share the same `HandlerConfig` type and runtime behavior. `defineHandler()` validates and returns the configuration unchanged; `handle` remains the executable property in both forms.
+
+### Request context
+
+The chain creates request metadata and a cancellation signal:
+
+```ts
+import { chain } from "@klnap/next-proxy-chain";
+
+export default chain([
+  {
+    name: "request-logger",
+    handle: (_request, _event, context) => {
+      console.info({
+        requestId: context.requestId,
+        pathname: context.originalPathname,
+        elapsedMs: context.elapsedMs,
+      });
+    },
+  },
+]);
+```
+
+| Property           | Type          | Description                                          |
+| ------------------ | ------------- | ---------------------------------------------------- |
+| `requestId`        | `string`      | Generated request identifier with the `req_` prefix. |
+| `startedAt`        | `number`      | Unix timestamp in milliseconds.                      |
+| `elapsedMs`        | `number`      | Monotonic elapsed time.                              |
+| `originalUrl`      | `string`      | Original request URL.                                |
+| `originalPathname` | `string`      | Original request pathname.                           |
+| `originalHostname` | `string`      | Original request hostname.                           |
+| `signal`           | `AbortSignal` | Execution-scoped cancellation signal.                |
+
+Built-in metadata is read-only. Each chain invocation gets a new request ID. Application context is isolated per request and shared between that request's handlers. Custom properties are optional until a handler sets them, so a reader that runs first can observe `undefined`. A matching predicate and its handler share the same execution-scope signal.
 
 ```ts
 import { chain } from "@klnap/next-proxy-chain";
 import { NextResponse } from "next/server";
 
-function analytics(request, event) {
-  event.waitUntil(sendPageView(request.nextUrl.pathname));
-  return NextResponse.next();
-}
+type AppContext = {
+  isPreview: boolean;
+};
 
-export default chain([analytics, intlProxy, securityProxy]);
-```
-
-A handler continues the chain by returning `undefined` or `NextResponse.next()`. A handler stops the chain by returning a `Response`, `NextResponse.redirect()`, `NextResponse.json()`, or `Response.redirect()`. The rest of this page explains each case.
-
-## Scoped handlers
-
-Wrap a handler in a tuple to run it only for some paths or hosts:
-
-```ts
-export default chain([
-  // Only /dashboard and its children.
-  [authProxy, "/dashboard/**"],
-
-  // Everything except /login.
-  [adminProxy, { exclude: "/admin/login" }],
-
-  // RegExp works too.
-  [privateProxy, { exclude: /^\/public(\/.*)?$/ }],
-
-  // Several patterns and a host.
-  [billingProxy, { include: { host: "app.example.com", path: ["/billing/**", "/invoices/**"] } }],
+export default chain<AppContext>([
+  {
+    name: "detect-preview",
+    handle: (request, _event, context) => {
+      context.isPreview = request.nextUrl.searchParams.has("preview");
+    },
+  },
+  {
+    name: "preview-headers",
+    handle: (_request, _event, context) => {
+      if (!context.isPreview) return;
+      const response = NextResponse.next();
+      response.headers.set("cache-control", "no-store");
+      return response;
+    },
+  },
 ]);
 ```
 
-Path patterns:
-
-- `*` matches one segment: `/api/*` matches `/api/users`, not `/api/users/123`.
-- `**` matches any depth, including zero segments: `/docs/**` matches `/docs` and `/docs/a/b`.
-- `:name` matches one segment and does not capture a value.
-- A RegExp is matched against the decoded path. Anchor it with `^` and `$` for an exact match.
-
-Segments are compared whole. `/tenant` does not match `/tenant-other`. A pattern such as `/files/*.pdf` throws when the chain is created, because wildcards must be whole segments.
-
-## Context: request metadata and shared state
-
-Every invocation gets a unique request ID and immutable metadata. Add an application context type to share mutable state between handlers:
+Context is not forwarded downstream automatically. To make a request ID visible to route handlers, use Next.js's native request-header forwarding:
 
 ```ts
-import { chain, defineHandler, next } from "@klnap/next-proxy-chain";
+import { chain } from "@klnap/next-proxy-chain";
 import { NextResponse } from "next/server";
 
-type Context = { session?: { user: string } };
+export default chain([
+  {
+    name: "request-id",
+    handle: (request, _event, context) => {
+      const headers = new Headers(request.headers);
+      headers.set("x-request-id", context.requestId);
+      return NextResponse.next({
+        request: { headers },
+      });
+    },
+  },
+]);
+```
 
-const readSession = defineHandler<Context>({
-  name: "read-session",
-  handler: (request, _event, context) => {
-    const user = request.cookies.get("user")?.value;
-    if (user) context.session = { user };
-    return next();
+`NextResponse.next({ request: { headers } })` replaces the forwarded request-header set. Cloning `request.headers` preserves existing headers; omitted headers are removed downstream. This changes downstream request headers, not client-facing response headers. Validate client-controlled values and avoid forwarding sensitive headers without a reason. See [Security](docs/security.md#request-headers).
+
+### Timeouts and error recovery
+
+The chain-level `timeout` sets a deadline in milliseconds for each handler execution. Its default is `0`, which disables timeouts. A handler-level `timeout` overrides the chain default; handler value `0` disables that handler's deadline. The `when` predicate and `handle` share the same deadline.
+
+```ts
+import { chain } from "@klnap/next-proxy-chain";
+
+import { loadRequestSettings } from "@/lib/proxy/settings";
+
+export default chain(
+  [
+    {
+      name: "request-settings",
+      rules: { include: "/dashboard/**" },
+      timeout: 500,
+      handle: async (_request, _event, context) => {
+        const settings = await loadRequestSettings({ signal: context.signal });
+        if (settings.maintenanceMode) {
+          return new Response("Service unavailable", { status: 503 });
+        }
+      },
+    },
+  ],
+  {
+    onError: () => new Response("Service unavailable", { status: 503 }),
+  },
+);
+```
+
+Pass `context.signal` to work that supports cooperative cancellation. A timeout or request cancellation stops the chain from waiting, but cannot stop synchronous JavaScript or work that ignores its signal. `event.waitUntil()` work is outside the handler timeout.
+
+For ordinary errors, handler-level `onError` takes precedence over chain-level `onError`. Returning `NextResponse.next()` continues after the failed handler. A terminal `Response` stops the chain.
+
+Timeout and request-cancellation recovery accepts only a terminal Web `Response`. Without recovery, a timeout returns `500`. Cancellation stops this chain and returns a native `NextResponse.next()` handoff. Next.js may continue downstream routing, so cancellation is not a fail-closed response.
+
+### Debugging and observability
+
+Debugging defaults to `false`. Set `debug: true` as an alias for `"detailed"`, or choose a mode:
+
+| Mode       | Output                                |
+| ---------- | ------------------------------------- |
+| `compact`  | Single-line request summary.          |
+| `detailed` | Request summary and handler outcomes. |
+| `verbose`  | Matching and execution details.       |
+
+These examples show a continuing security handler, a skipped authentication handler, and a staged localization rewrite. Request IDs and durations vary:
+
+```text
+[proxy-chain] req_d14c6cf2-962a-400a-8b7f-6e3c45545fc5 · GET /products · REWRITE /pl/products · 4.34ms · 3/3 handlers
+```
+
+```text
+[proxy-chain] GET /products
+  Request: req_63491ecd-a382-4cd4-9a88-b1e8575a33c5
+│ ✓ security         continue       0.15ms
+│ ○ authentication   skipped
+│ ↪ localization     rewrite        0.13ms
+└ REWRITE /pl/products
+  Total: 0.80ms
+```
+
+The compact `reached/total` count includes skipped handlers. Handlers after a terminal outcome count only in the total. See the [diagnostics guide](docs/guides.md#diagnostics) for verbose output.
+
+Use `onTrace` for structured diagnostics independently of formatted logging:
+
+```ts
+import { chain } from "@klnap/next-proxy-chain";
+
+export default chain(handlers, {
+  debug: "detailed",
+  onTrace: (trace) => {
+    console.info({
+      requestId: trace.requestId,
+      outcome: trace.outcome.type,
+      handlers: trace.handlers,
+    });
   },
 });
-
-// Reads the value.
-const requireUser = defineHandler<Context>({
-  name: "require-user",
-  handler: (request, _event, context) => {
-    const session = context.session;
-    if (!session) return NextResponse.redirect(new URL("/login", request.url));
-    return next();
-  },
-});
-
-export default chain<Context>([readSession, [requireUser, "/dashboard/**"]]);
 ```
 
-- `requestId`, `startedAt`, `elapsedMs`, `originalUrl`, `originalPathname`, `originalHostname`, and `signal` are read-only.
-- `requestId` is generated by the package and ignores incoming request-ID headers.
-- Application properties are optional until set. Each request gets isolated state.
-- Use a finite-key object type for application state; broad string index signatures make `HandlerContext<T>` resolve to `never`.
-- Rules run in array order. Set the value before the rule that reads it.
-- A native handler reads the same metadata and application state through its third argument: `(request, event, ctx)`.
+Formatted and structured traces omit header values, cookie values, raw query values, request bodies, application context values, and raw errors.
 
-## Continuing and stopping
+`tracePath: false` omits only the original request pathname from the top-level trace and formatted request line. Handler scope patterns and sanitized rewrite or redirect destination paths remain visible. Destination query values appear as `?[query]`.
 
-| A handler returns                                                                      | Effect                                                                                                                      |
-| :------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------- |
-| `undefined` or nothing                                                                 | Continue.                                                                                                                   |
-| `NextResponse.next()`                                                                  | Continue. Its request-header overrides are kept.                                                                            |
-| `NextResponse.rewrite(url)`                                                            | Continue. The rewrite is applied at the end unless a later handler stops.                                                   |
-| `NextResponse.redirect(url)`, `NextResponse.json()`, `Response`, `Response.redirect()` | Stop and return that response.                                                                                              |
-| `next({ request, headers })`                                                           | Continue, and apply the given headers. This is a library token; plain Next.js handlers should return `NextResponse.next()`. |
-| A thrown error or a rejected promise                                                   | Fail closed with `500`, unless `onError` is set.                                                                            |
+## Configuration
 
-Stopping is immediate. A handler after a stopping handler does not run, so put checks that must always run before any handler that might answer the request.
+`chain(entries, options?)` accepts native handlers and configured handler objects. Handler-level options are `rules`, `timeout`, `debug`, and `onError`.
 
-Headers and cookies that earlier handlers set are kept on the response that stops the chain. Handlers after it do not contribute.
+| Chain option          | Default                 | Description                                                                                     |
+| --------------------- | ----------------------- | ----------------------------------------------------------------------------------------------- |
+| `timeout`             | `0`                     | Per-handler deadline in milliseconds; `0` disables it. Handler values override the chain value. |
+| `debug`               | `false`                 | Formatted diagnostics. `true` means `"detailed"`; handlers can override the chain level.        |
+| `onError`             | None                    | Recovery for ordinary handler errors; handler-level recovery takes precedence.                  |
+| `onTrace`             | None                    | Callback for structured request traces.                                                         |
+| `tracePath`           | `true`                  | Include the original pathname in diagnostics.                                                   |
+| `logger`              | Console logger (`info`) | Logger with `debug`, `info`, `warn`, and `error` methods.                                       |
+| `headerMergeStrategy` | `"last-write-wins"`     | Resolve conflicts between response headers from continued handlers.                             |
+| `cookieMergeStrategy` | `"last-write-wins"`     | Resolve conflicts between cookie identities from continued handlers.                            |
+| `strictOverrideCheck` | `false`                 | Throw at chain creation if native request-header override support cannot be verified.           |
 
-## Options
-
-`chain(entries, options)` accepts these options:
-
-| Option                                       | Purpose                                                                          |
-| :------------------------------------------- | :------------------------------------------------------------------------------- |
-| `onError`                                    | Returns a `Response` to stop with, `next()` to continue, or nothing for a `500`. |
-| `timeout`                                    | Time limit per handler, including its predicate. `0` (default) disables it.      |
-| `headerMergeStrategy`, `cookieMergeStrategy` | How conflicting response headers and cookies are resolved.                       |
-| `requestHeaderPolicy`                        | Which request headers `next({ request })` may set.                               |
-| `debug`, `logger`                            | Built-in diagnostics level and its output sink. Debugging defaults to `false`.   |
-| `onTrace`                                    | Optional non-blocking callback with one structured trace per request.            |
-| `tracePath`                                  | Include the request pathname in diagnostics. Set `false` to omit it.             |
-| `strictOverrideCheck`                        | Throw at startup if Next.js does not apply request overrides.                    |
-
-The full reference is in [docs/api.md](https://github.com/klnap/next-proxy-chain/blob/main/docs/api.md).
-
-## Debugging and observability
-
-Enable debugging to see how a request moves through the chain, which handlers run, which are skipped, how long they take, and what response the chain ultimately returns.
-
-```ts
-export default chain(handlers, {
-  debug: true,
-});
-```
-
-Debug output is off by default, including in development. Set it explicitly:
-
-```ts
-export default chain(handlers, {
-  debug: process.env.NODE_ENV === "development",
-});
-```
-
-`debug` accepts `false`, `true`, `'compact'`, `'detailed'`, or `'verbose'`. `true` means `'detailed'`. Every mode includes the request ID. Compact prints one request summary; detailed adds handler outcomes; verbose adds matching rules and effective timeouts.
-
-Use `defineHandler()` for named handlers with local settings:
-
-```ts
-import { chain, defineHandler } from "@klnap/next-proxy-chain";
-
-type Context = { user: string };
-
-const authHandler = defineHandler<Context>({
-  name: "auth",
-  debug: "verbose",
-  timeout: 2000,
-  rules: {
-    include: ["/dashboard/**", "/account/**"],
-    exclude: "/account/login",
-  },
-  handler: (request, event, context) => authenticate(request, event, context),
-});
-
-export default chain([authHandler], { debug: "compact" });
-```
-
-Handler settings override chain settings; chain settings override library defaults. An explicit `debug: false` hides that handler's built-in detail. It does not affect execution or `onTrace`. A handler-level detail override can enable output while global debugging is off.
-
-`defineHandler` can also set a local `onError`. It replaces the chain-level error handler for that handler; a local failure does not fall through to the global handler.
-
-Detailed output distinguishes continuation, rewrites, redirects, terminal responses, rule skips, handlers not reached, recovered errors, failures, and timeouts. `NEXT` means Next.js continues routing; it does not claim the application returned HTTP 200.
-
-```text
-proxy-chain GET /en/dashboard                          1.48ms
-│ ✓ security         continue       0.12ms
-│ ✓ session          continue       0.84ms
-│ ○ auth             skipped
-│   include: /account/** (mismatch)
-│   reason: include-mismatch
-└ NEXT
-```
-
-```text
-proxy-chain GET /old-page                              0.42ms
-│ ↗ redirects        redirect       0.14ms
-│   destination: /new-page
-└ REDIRECT 301 /new-page
-```
-
-```text
-proxy-chain GET /work                                  1.48ms
-│ ↪ intl             rewrite        1.07ms
-│   destination: /en/work
-└ REWRITE /en/work
-```
-
-```text
-proxy-chain GET /account                              2001.24ms
-│ ✓ security         continue       0.08ms
-│ × session          timeout        2000.00ms
-│   timeout: 2000ms (handler)
-│   error policy: chain default
-│   deadline: 2000ms
-│ – auth             not reached
-└ ERROR 500 · timeout 2000ms
-```
-
-```text
-proxy-chain GET /work                                  4.72ms
-│ ✓ security         continue       0.11ms
-│ ! analytics        recovered      4.21ms
-│   error policy: chain
-│ ✓ intl             continue       0.24ms
-└ NEXT
-```
-
-Compact output is one line:
-
-```text
-proxy-chain GET /work → NEXT · 3 executed · 1 skipped · 1.48ms
-```
-
-Send traces to any logger without adding a logging dependency:
-
-```ts
-export default chain(handlers, {
-  onTrace: (trace) => logger.info(trace),
-});
-```
-
-`onTrace` runs once after each request. The chain does not await it. Synchronous failures and rejected promises are ignored, so logging cannot change the response. The `logger` option replaces the built-in terminal sink; it receives one completed formatted block through `info`. It does not receive every handler event.
-
-Diagnostics omit query strings, headers, bodies, context values, and raw errors. Redirect and rewrite query values are redacted. Set `tracePath: false` when pathnames may contain private data. Names and strings are length-limited and terminal controls are escaped. Color follows `NO_COLOR` first, then `FORCE_COLOR`, then TTY detection; uncertain or non-interactive output stays plain. Unicode symbols fall back to ASCII for C/POSIX or ASCII locales.
-
-When debugging and tracing are both disabled, the chain does not create trace arrays or read a clock for diagnostics. Handler durations include `when` evaluation and error recovery; total duration also includes composition and response finalization, so handler durations need not sum to the total. Cross-process and external sink ordering is not guaranteed.
-
-### Benchmark
-
-Run `bun run bench/diagnostics.bench.ts` to compare disabled diagnostics, output levels, structured traces, formatter cost, and concurrent requests. Set `BENCH_TERMINAL_IO=1` to measure actual console output separately. Results vary by runtime and host; these are local measurements, not performance guarantees.
-
-Sample run: Bun 1.4.4, Node.js 26.13.1, Linux x86_64 under WSL2, Intel Core i3-10105, three handlers, 20,000 measured requests after 1,000 warmups:
-
-| Case                                   | µs/request |
-| :------------------------------------- | ---------: |
-| Debug disabled                         |       6.61 |
-| Compact                                |      11.46 |
-| Detailed                               |      14.79 |
-| Verbose                                |      20.39 |
-| Structured trace                       |      10.29 |
-| Detailed, 32 concurrent                |      16.45 |
-| Terminal output, compact (10 requests) |      39.63 |
-
-Formatting a collected trace alone took 0.59 µs for compact, 3.19 µs for detailed, and 3.54 µs for verbose.
-
-## Native compatibility
-
-- A plain handler gets `(request, event)`, exactly as in a native `proxy.ts`. `chain()` also passes the request context as an optional third argument, which Next.js never uses.
-- `export default chain([...])` is the default export that Next.js expects. Put `export const config = { matcher }` next to it as usual.
-- Handlers can be async.
-- Handlers returned by other packages work unchanged, if they follow the native signature.
-
-## Documentation
-
-- [Concepts](https://github.com/klnap/next-proxy-chain/blob/main/docs/concepts.md): execution order, continuation, scoping, headers, cookies, errors.
-- [Guides](https://github.com/klnap/next-proxy-chain/blob/main/docs/guides.md): recipes for common tasks.
-- [API reference](https://github.com/klnap/next-proxy-chain/blob/main/docs/api.md): every export and option.
-- [Security](https://github.com/klnap/next-proxy-chain/blob/main/docs/security.md): trust boundaries and safe usage.
-
-Runnable examples are in [`examples/`](https://github.com/klnap/next-proxy-chain/blob/main/examples/).
-
-## Migration
-
-Version 2 removes `proxyChain()`, `defineProxy()`, context-first handler signatures, and manually constructed rule objects. Upgrade with:
-
-1. Install `@klnap/next-proxy-chain@^2.0.0`.
-2. Change `proxyChain(options, entries)` to `chain(entries, options)`.
-3. Replace `defineProxy(name, (request, context, event) => ...)` with `defineHandler({ name, handler: (request, event, context) => ... })`.
-4. Replace callable scopes such as `handler({ include })` with `[handler, { include }]`, or move the scope into `defineHandler({ rules })`.
-5. Replace manually constructed `{ run, include, exclude, name }` entries with native functions or `defineHandler()` results.
-
-Version 1.2 remains backward compatible. Keep using it if you cannot migrate yet.
+`onTrace`, `tracePath`, `logger`, merge strategies, and `strictOverrideCheck` are chain-level only. See the [API reference](docs/api.md#chain-options) for types and precedence.
 
 ## Compatibility
 
-- Next.js: peer `>=15.0.0`. CI tests packed ESM, CommonJS, and TypeScript consumers with Next.js 15.5.29 and 16.3.2; CI does not run a live application.
-- Node.js `>=20`, Bun `>=1`.
-- Next.js 16 runs `proxy.ts` on the Node.js runtime by default. The package uses only Web platform APIs, so it should also run on the Edge runtime for Next.js 15 `middleware.ts`, but that is not tested here.
-- Framework-neutral use (Express, Hono) is not supported. The package depends on Next.js request and response semantics.
+The package declares `next >=15.0.0` as a peer dependency and Node.js `>=20.0.0`. It provides ESM and CommonJS entrypoints with TypeScript declarations.
 
-## Links
+Packed consumer builds and live requests were verified with Next.js 15.5.29 and 16.3.2 on Node.js 26.13.1. This does not verify every version in the peer range. Next.js 15 Edge deployments have not been independently verified.
 
-- [Changelog](https://github.com/klnap/next-proxy-chain/blob/main/CHANGELOG.md)
-- [Issues](https://github.com/klnap/next-proxy-chain/issues)
+## Documentation
+
+- [Concepts](docs/concepts.md) — execution model, matching, rewrites, HTTP composition, and context.
+- [Guides](docs/guides.md) — practical integration examples, request IDs, cancellation, and diagnostics.
+- [API reference](docs/api.md) — public exports, configuration, types, defaults, and precedence.
+- [Security](docs/security.md) — trust boundaries, limitations, and safe integration.
+
+### AI coding agents
+
+The package tarball includes version-matched consumer documentation and public declarations. Read [`llms.txt`](llms.txt) from the installed package at `node_modules/@klnap/next-proxy-chain/`.
+
+```text
+Before integrating @klnap/next-proxy-chain, read the
+installed package's llms.txt, README.md, relevant
+documentation, and public TypeScript declarations.
+
+Use the installed package's API as the source of truth.
+```
 
 ## License
 
-[MIT](https://github.com/klnap/next-proxy-chain/blob/main/LICENSE)
+[MIT](LICENSE)

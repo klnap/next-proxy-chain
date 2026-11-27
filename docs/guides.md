@@ -1,210 +1,210 @@
 # Guides
 
-Each recipe is short and links to a runnable file in [`examples/`](../examples/). Read [Concepts](concepts.md) first if you have not yet.
+## Native matcher configuration
 
-## Protect a set of routes
-
-Scope the rule with `include`. Use `**` so that every route below the prefix is covered.
+Keep the Next.js matcher at the entrypoint. Use `rules` to scope one handler:
 
 ```ts
-import { chain, defineHandler, next, path } from "@klnap/next-proxy-chain";
+export const config = { matcher: ["/api/:path*"] };
 
-const requireApiKey = defineHandler({
-  name: "api-key",
-  rules: { include: path("/api/**") },
-  handler: (request) => {
-    if (!request.headers.get("x-api-key")) return new Response("Unauthorized", { status: 401 });
-    return next();
-  },
-});
-
-export default chain([requireApiKey]);
-```
-
-`/api/**` covers `/api`, `/api/users`, and `/api/users/123`. A pattern such as `/api/*` covers only one segment.
-
-Check the credential itself in your own code before you rely on it. See [Security: Authentication](security.md#authentication). [examples/02](../examples/02-scoped-rules.ts) has a fuller version with an exclusion.
-
-## Exclude public paths
-
-Add `exclude` next to `include`. `exclude` wins when both match.
-
-```ts
 export default chain([
-  [requireApiKey, { include: path("/api/**"), exclude: path("/api/public/**") }],
+  {
+    name: "api-auth",
+    rules: {
+      include: "/api/**",
+      exclude: "/api/public/**",
+      when: async (request) => request.headers.has("authorization"),
+    },
+    handle: (request) => verifyApiRequest(request),
+  },
 ]);
 ```
 
-Make sure the excluded paths are truly public. Anything the exclusion matches skips every check on that rule.
+Path strings support `*` for one segment and `**` for zero or more segments. Scope objects can combine `host` and `path`.
 
-## Limit a rule to one host
+## Add, update, and remove request headers
 
-```ts
-const adminOnly = defineHandler({
-  name: "admin",
-  rules: { include: { host: "admin.example.com", path: "/settings/**" } },
-  handler: () => new Response("Forbidden", { status: 403 }),
-});
-
-export default chain([adminOnly]);
-```
-
-Host matching uses the `host` header. Treat it as routing, not as access control. See [Security: Host matching](security.md#host-matching).
-
-## Add security headers to every response
-
-Put the rule first, so it also runs before any redirect.
+Next.js treats the supplied `Headers` as a replacement set. Clone the effective request headers to preserve existing values:
 
 ```ts
-const securityHeaders = defineHandler({
-  name: "security-headers",
-  handler: () =>
-    next({
-      headers: {
-        "x-frame-options": "DENY",
-        "x-content-type-options": "nosniff",
-      },
-    }),
-});
+import { NextResponse } from "next/server";
 
-export default chain([securityHeaders, [requireSession, { include: path("/dashboard/**") }]]);
-```
-
-[examples/01](../examples/01-quick-start.ts) shows the complete file.
-
-## Share typed state between rules
-
-Pass a finite-key application context type to `chain`. Its properties are optional until set and isolated per request. Broad string index signatures make `HandlerContext<T>` resolve to `never`. Request identity and original URL metadata are built in.
-
-```ts
-type RequestState = { locale?: string };
-
-const detectLocale = defineHandler<RequestState>({
-  name: "detect-locale",
-  handler: (request, _event, context) => {
-    context.locale = request.headers.get("accept-language")?.startsWith("pl") ? "pl" : "en";
-    return next();
+{
+  name: "request-metadata",
+  handle: (request) => {
+    const headers = new Headers(request.headers);
+    headers.set("x-user-tier", "free");
+    headers.set("x-request-source", "proxy");
+    headers.delete("x-untrusted-client-value");
+    return NextResponse.next({ request: { headers } });
   },
-});
-
-export default chain<RequestState>([detectLocale]);
-```
-
-Use `context.requestId` for logs or forward it explicitly with `next({ request })`. Incoming request-ID headers do not change the generated ID. Route handlers cannot read context directly. [examples/03](../examples/03-typed-context.ts) has the complete file.
-
-## Pass a value to route handlers
-
-Use `next({ request })`. The handler reads it with `headers()` or `request.headers`.
-
-```ts
-next({ request: { "x-user-tier": "free" } });
-```
-
-Headers you pass this way go through `requestHeaderPolicy`. By default, `cookie` and `authorization` cannot be set this way. [examples/04](../examples/04-request-and-response-headers.ts) shows which names are dropped.
-
-## Set a response header for the browser
-
-Use `headers`. This is what the browser receives.
-
-```ts
-next({ headers: { "cache-control": "no-store" } });
-```
-
-Request headers and response headers are separate channels. Setting one does not set the other.
-
-Keep proxy response headers to safe values such as `cache-control` and security headers. Next.js advises against setting `Content-Type` from the proxy, because it can break Server Actions and streaming. See [the API notes](api.md#next).
-
-## Redirect old URLs
-
-Return `NextResponse.redirect`. The chain stops, so rules after it do not run.
-
-```ts
-const legacyRedirect = defineHandler({
-  name: "legacy-redirect",
-  handler: (request) => {
-    if (request.nextUrl.pathname === "/old") {
-      return NextResponse.redirect(new URL("/new", request.url), 308);
-    }
-    return next();
-  },
-});
-```
-
-## Rewrite a path and keep going
-
-Return `NextResponse.rewrite`. The chain continues, and later rules see the new path.
-
-```ts
-const localeRewrite = defineHandler({
-  name: "locale-rewrite",
-  handler: (request) => {
-    const { pathname } = request.nextUrl;
-    if (pathname.startsWith("/pl/")) return undefined;
-    return NextResponse.rewrite(new URL(`/pl${pathname}`, request.url));
-  },
-});
-
-// Without a matcher the rewrite would also run for static files and API routes.
-export const config = {
-  matcher: ["/((?!_next/static|_next/image|api|favicon.ico).*)"],
-};
-
-// Runs for /pl/... only, including requests that were just rewritten to it.
-const plOnly = defineHandler({
-  name: "pl-only",
-  rules: { include: path("/pl/**") },
-  handler: () => next({ headers: { "content-language": "pl" } }),
-});
-```
-
-[examples/05](../examples/05-redirect-and-rewrite.ts) combines a redirect and a rewrite.
-
-## Recover from a failing remote check
-
-Use `onError` for rules that call other services. Return a response that you choose, and do not return `next()` for an access-control rule.
-
-```ts
-export default chain([lookupFeatureFlags], {
-  timeout: 500,
-  onError: () => new Response("Service unavailable", { status: 503 }),
-});
-```
-
-[examples/06](../examples/06-error-recovery.ts) has the complete file. See [Security: Error recovery](security.md#error-recovery) before you return `next()` from `onError`.
-
-## Compose independent integrations
-
-Export each concern as a factory, and let the app decide the order.
-
-```ts
-// lib/proxy/locale.ts
-export function createLocaleRule(locales: readonly string[], fallback: string) {
-  return defineHandler({
-    name: "locale",
-    handler: (request) => {
-      const first = request.nextUrl.pathname.split("/")[1] ?? "";
-      if (locales.includes(first)) return next();
-      return next({ headers: { "content-language": fallback } });
-    },
-  });
 }
-
-// proxy.ts
-const locale = createLocaleRule(["en", "pl"], "en");
-export default chain([requestId, maintenance, [locale, path("/**")]]);
 ```
 
-Factories keep each integration testable on its own. Share one context type across the integrations with `chain<Context>(...)`. [examples/07](../examples/07-composing-rules.ts) shows the complete pattern.
+To deliberately replace the entire set, create a new `Headers` instance and add only the values to forward. Headers omitted from that set are removed downstream. A later handler sees the effective result and can clone it before making another change.
 
-## Log what the chain does
+## Forward a request ID
 
-Set `debug` to `'compact'`, `'detailed'`, or `'verbose'` for built-in request diagnostics. Use `onTrace` for structured data, independent of built-in output.
+The chain generates `context.requestId`, but does not forward it automatically:
 
 ```ts
-export default chain(rules, {
-  debug: process.env.NODE_ENV === "development",
-  onTrace: (trace) => myLogger.info(trace),
+import { NextResponse } from "next/server";
+
+{
+  name: "request-id",
+  handle: (request, _event, context) => {
+    const headers = new Headers(request.headers);
+    headers.set("x-request-id", context.requestId);
+    return NextResponse.next({ request: { headers } });
+  },
+}
+```
+
+This changes request headers seen by downstream handlers and route code. It does not set a client-facing response header.
+
+## Set response headers and cookies
+
+Use the native response object:
+
+```ts
+import { NextResponse } from "next/server";
+
+{
+  name: "security",
+  handle: () => {
+    const response = NextResponse.next();
+    response.headers.set("x-content-type-options", "nosniff");
+    response.cookies.set("locale", "en");
+    return response;
+  },
+}
+```
+
+Response headers and cookies are composed across continued handlers. Last write wins by default.
+
+## Rewrite and continue
+
+A successful rewrite is staged. Later handlers receive the rewritten pathname, while `context.originalPathname` retains the original value:
+
+```ts
+import { NextResponse } from "next/server";
+
+{
+  name: "localized-route",
+  rules: { include: "/**" },
+  handle: (request) => {
+    if (request.nextUrl.pathname.startsWith("/pl/")) return;
+    return NextResponse.rewrite(new URL(`/pl${request.nextUrl.pathname}`, request.url));
+  },
+}
+```
+
+Internal and external destinations use Next.js's `NextResponse.rewrite()` API. A later redirect or terminal response stops the chain.
+
+## Redirect
+
+```ts
+import { NextResponse } from "next/server";
+
+{
+  name: "canonical-host",
+  handle: (request) => {
+    if (request.nextUrl.hostname !== "www.example.com") {
+      return NextResponse.redirect(new URL(request.url.replace("://", "://www."), request.url));
+    }
+  },
+}
+```
+
+Redirects are terminal. Earlier composed response headers and cookies remain on the outgoing response.
+
+## Share typed context
+
+```ts
+type RequestState = { locale?: "en" | "pl" };
+
+export default chain<RequestState>([
+  {
+    name: "detect-locale",
+    handle: (request, _event, context) => {
+      context.locale = request.headers.get("accept-language")?.startsWith("pl") ? "pl" : "en";
+    },
+  },
+  {
+    name: "locale-header",
+    handle: (_request, _event, context) => {
+      if (!context.locale) return;
+      const response = NextResponse.next();
+      response.headers.set("content-language", context.locale);
+      return response;
+    },
+  },
+]);
+```
+
+Custom context properties may be undefined until initialized. The chain isolates custom state between requests.
+
+## Timeout and cancellation
+
+```ts
+{
+  name: "remote-settings",
+  timeout: 500,
+  handle: async (_request, _event, context) => {
+    return fetchSettings({ signal: context.signal });
+  },
+}
+```
+
+The handler and its `when` predicate share one timeout. Pass `context.signal` into supported APIs. Timeout stops later handlers; ignored work may continue if it does not honor cancellation.
+
+## Error recovery
+
+For ordinary failures, return native `NextResponse.next()` to continue:
+
+```ts
+{
+  name: "optional-profile",
+  onError: () => NextResponse.next(),
+  handle: async () => loadOptionalProfile(),
+}
+```
+
+For timeout and request cancellation, recovery must return a terminal Web `Response`:
+
+```ts
+{
+  name: "critical-profile",
+  onError: () => new Response("Service unavailable", { status: 503 }),
+  timeout: 500,
+  handle: async (_request, _event, context) => loadProfile({ signal: context.signal }),
+}
+```
+
+Handler-level `onError` takes precedence over chain-level `onError`. An absent recovery response fails closed.
+
+## Diagnostics
+
+Enable readable traces with `debug`:
+
+```ts
+export default chain(handlers, { debug: "detailed" });
+```
+
+Set `debug: "compact"` for a short trace. Compact `reached/total` counts include skipped handlers as reached outcomes, but skipped handlers did not execute their `handle` callback. Handlers after a terminal outcome count only in total.
+
+Use `onTrace` for structured data:
+
+```ts
+export default chain(handlers, {
+  onTrace: (trace) => {
+    console.info({
+      requestId: trace.requestId,
+      outcome: trace.outcome.type,
+      handlers: trace.handlers,
+    });
+  },
 });
 ```
 
-Debugging defaults to off, even in development. Diagnostics omit query strings, request data, context values, and raw errors. Pathnames can still contain private data; set `tracePath: false` to omit them.
+`tracePath: false` omits only the original request pathname from the top-level trace and formatted request line. It does not hide paths in scope details or sanitized rewrite and redirect destinations; destination query values appear as `?[query]`. Formatted traces and structured traces omit request and response header values, cookie values, raw query values, request bodies, application context values, and raw errors. Display formatting sanitizes and truncates handler names and destinations.

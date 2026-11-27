@@ -353,7 +353,7 @@ Formatted and structured traces omit header values, cookie values, raw query val
 
 The package declares `next >=15.0.0` as a peer dependency and Node.js `>=20.0.0`. It provides ESM and CommonJS entrypoints with TypeScript declarations.
 
-Packed consumer builds and live requests were verified with Next.js 15.5.29 and 16.3.2 on Node.js 26.13.1. This does not verify every version in the peer range. Next.js 15 Edge deployments have not been independently verified.
+Packed consumer builds and live requests were verified with Next.js 15.5.29 and 16.4.6 on Node.js 26.13.1. This does not verify every version in the peer range. Next.js 15 Edge deployments have not been independently verified.
 
 ## Documentation
 

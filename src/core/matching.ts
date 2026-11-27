@@ -36,15 +36,16 @@ function hostGlobToRegex(value: string): string {
 }
 
 /**
- * Builds a compiled Host matcher RegExp from domain names, `*.example.com` wildcards, or regex patterns.
+ * Compiles each host alternative separately. Joining sources would renumber capture groups,
+ * so a backreference would bind to another alternative's group. Each alternative is anchored
+ * to the whole hostname and matched case-insensitively, as the host contract requires.
  */
-export function host(matcher: HostMatcher): RegExp {
+export function host(matcher: HostMatcher): RegExp[] {
   const list = (Array.isArray(matcher) ? matcher : [matcher]) as (string | RegExp)[];
-  const parts = list.map((m: string | RegExp) => {
-    if (m instanceof RegExp) return `(?:${toStatelessRegExp(m).source})`;
-    return `(?:${hostGlobToRegex(m)})`;
+  return list.map((m) => {
+    const source = m instanceof RegExp ? m.source : hostGlobToRegex(m);
+    return new RegExp(`^(?:${source})$`, "i");
   });
-  return toStatelessRegExp(new RegExp(`^(?:${parts.join("|")})$`, "i"));
 }
 
 function isScopeObject(
@@ -159,7 +160,7 @@ export function compileScopes(input: RouteScopeList | undefined): CompiledScope[
 
 function scopeMatches(pathname: string, hostname: string | null, scope: CompiledScope): boolean {
   if (scope.host) {
-    if (!hostname || !scope.host.test(hostname)) return false;
+    if (!hostname || !scope.host.some((alternative) => alternative.test(hostname))) return false;
   }
   if (scope.path) {
     if (!scope.path.some((alternative) => alternative.test(pathname))) return false;
@@ -191,7 +192,7 @@ export function toRule<TFn, TContext extends object = object>(
         );
       }
       return {
-        host: s.host ? toStatelessRegExp(s.host) : undefined,
+        host: s.host?.map(toStatelessRegExp),
         path: s.path?.map(toStatelessRegExp),
       };
     });
@@ -284,7 +285,10 @@ function scopeKey(scope: CompiledScope): string {
   const path = scope.path
     ?.map((alternative) => `${alternative.source}::${alternative.flags}`)
     .join("&");
-  return `${scope.host?.source ?? "*"}::${scope.host?.flags ?? ""}|${path ?? "*"}`;
+  const hostKey = scope.host
+    ?.map((alternative) => `${alternative.source}::${alternative.flags}`)
+    .join("&");
+  return `${hostKey ?? "*"}|${path ?? "*"}`;
 }
 
 /**

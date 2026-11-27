@@ -27,7 +27,7 @@ describe("scope matching hardening", () => {
 
   it("strips a trailing dot from the Host header", () => {
     expect(normalizeHost("admin.example.com.")).toBe("admin.example.com");
-    expect(host(/^admin\.example\.com$/).test(normalizeHost("admin.example.com.") ?? "")).toBe(
+    expect(host(/^admin\.example\.com$/)[0]!.test(normalizeHost("admin.example.com.") ?? "")).toBe(
       true,
     );
   });

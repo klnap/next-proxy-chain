@@ -56,13 +56,15 @@ describe("Scope Matching & Host Normalization", () => {
   });
 
   it("matches exact host strings and arrays of host patterns", () => {
-    expect(host("shop.localhost").test("shop.localhost")).toBe(true);
-    expect(host(["shop.localhost", "app.localhost"]).test("app.localhost")).toBe(true);
-    expect(host("shop.localhost").test("other.localhost")).toBe(false);
+    expect(host("shop.localhost")[0]!.test("shop.localhost")).toBe(true);
+    expect(host(["shop.localhost", "app.localhost"]).some((re) => re.test("app.localhost"))).toBe(
+      true,
+    );
+    expect(host("shop.localhost")[0]!.test("other.localhost")).toBe(false);
   });
 
   it("matches `*.example.com` as a single DNS label wildcard", () => {
-    const re = host("*.example.com");
+    const re = host("*.example.com")[0]!;
     expect(re.test("foo.example.com")).toBe(true);
     expect(re.test("bar.example.com")).toBe(true);
     expect(re.test("example.com")).toBe(false);

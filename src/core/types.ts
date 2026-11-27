@@ -24,7 +24,8 @@ export type RouteScopeList = RouteScopeInput | RouteScopeInput[];
 
 /** Compiled route scope evaluated during request execution. */
 export type CompiledScope = {
-  host?: RegExp;
+  /** Independent alternatives with OR semantics; each is anchored and case-insensitive. */
+  host?: RegExp[];
   /** Independent alternatives with OR semantics; each keeps its own flags. */
   path?: RegExp[];
 };

@@ -161,7 +161,7 @@ jobs:
            const consumer16 = path.join(process.env.RUNNER_TEMP, "release-consumer-next16");
            execFileSync("mkdir", ["-p", consumer16]);
            await fs.cp("tests/consumer", consumer16, { recursive: true });
-           execFileSync("npm", ["install", "--prefix", consumer16, "--ignore-scripts", "--no-audit", "--no-fund", tarball, "next@16.3.2", "react@19.2.8", "react-dom@19.2.8", "@types/node@20", "@types/react@19", "@types/react-dom@19"], { stdio: "inherit" });
+           execFileSync("npm", ["install", "--prefix", consumer16, "--ignore-scripts", "--no-audit", "--no-fund", tarball, "next@16.4.6", "react@19.2.8", "react-dom@19.2.8", "@types/node@20", "@types/react@19", "@types/react-dom@19"], { stdio: "inherit" });
            execFileSync(path.resolve("node_modules/.bin/tsc"), ["--project", path.join(consumer16, "tsconfig.json")], { stdio: "inherit" });
            execFileSync("node", [path.join(consumer16, "consumer.mjs")], { cwd: consumer16, stdio: "inherit" });
            execFileSync("node", [path.join(consumer16, "consumer.cjs")], { cwd: consumer16, stdio: "inherit" });

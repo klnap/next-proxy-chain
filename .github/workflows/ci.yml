@@ -104,7 +104,7 @@ jobs:
           CONSUMER_DIR: ${{ runner.temp }}/consumer-next16
         run: | # zizmor: ignore[adhoc-packages] installs the exact local tarball and pinned peer dependencies; lifecycle scripts are disabled
           mkdir -p "$CONSUMER_DIR"
-          npm install --prefix "$CONSUMER_DIR" --ignore-scripts --no-audit --no-fund "$TARBALL" next@16.3.2 react@19.2.8 react-dom@19.2.8 @types/node@20 @types/react@19 @types/react-dom@19
+          npm install --prefix "$CONSUMER_DIR" --ignore-scripts --no-audit --no-fund "$TARBALL" next@16.4.6 react@19.2.8 react-dom@19.2.8 @types/node@20 @types/react@19 @types/react-dom@19
           cp -R "$GITHUB_WORKSPACE/tests/consumer/." "$CONSUMER_DIR/"
           "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --project "$CONSUMER_DIR/tsconfig.json"
           (cd "$CONSUMER_DIR" && node consumer.mjs && node consumer.cjs)

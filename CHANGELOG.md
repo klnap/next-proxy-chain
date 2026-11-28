@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.3
+
+### Patch Changes
+
+- 155b1cc: Remove internal README research notes from the repository. No runtime or public API change.
+- 0299607: Fix terminal recovery routing. A `NextResponse.rewrite()` with a non-success status returned from timeout, request-cancellation, or engine-level recovery was classified as a terminal response that kept `x-middleware-rewrite`, so Next.js routed to the rewritten destination despite the error status. Timeout and engine-level recovery now reject any native rewrite and fail closed with `500`. Terminal responses in ordinary execution no longer carry `x-middleware-next` or `x-middleware-rewrite` to Next.js; redirects, terminal `Response` values, and the documented cancellation fallback are unchanged.
+
 ## 3.0.2
 
 ### Patch Changes

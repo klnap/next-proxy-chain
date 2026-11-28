@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.4
+
+### Patch Changes
+
+- a7c3155: Release workflow only: retry the pack artifact download once after a short wait, matching npm-package-template. No runtime change.
+
 ## 3.0.3
 
 ### Patch Changes
